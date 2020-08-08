@@ -12,6 +12,7 @@
 #include <Windows.h>
 #include <thread>
 #include <chrono>
+#include <array>
 #include "STLExtern.hpp"
 #include "DiceXMLTree.h"
 #include "DiceFile.hpp"
@@ -21,6 +22,9 @@
 using namespace std::literals::chrono_literals;
 using std::string;
 using std::to_string;
+
+extern string dirExe;
+extern string DiceDir;
 
 enum class ClockEvent { off, on, save, clear };
 
@@ -122,7 +126,7 @@ public:
 	}
 	void save() 
 	{
-		mkDir("DiceData\\conf");
+		mkDir(DiceDir + "/conf");
 		DDOM xml("console","");
 		xml.push(DDOM("mode", to_string(isMasterMode)));
 		xml.push(DDOM("master", to_string(masterQQ)));
@@ -181,10 +185,6 @@ void getExceptGroup();
 	//通知
 	//一键清退
 	extern int clearGroup(std::string strPara = "unpower", long long fromQQ = 0);
-	//连接的聊天窗口
-	extern std::map<chatType, chatType> mLinkedList;
-	//单向转发列表
-	extern std::multimap<chatType, chatType> mFwdList;
 	//程序启动时间
 	extern long long llStartTime;
 	//当前时间
@@ -202,19 +202,23 @@ void ConsoleTimer();
 class ThreadFactory
 {
 public:
-	ThreadFactory()
-	{
-	}
+	ThreadFactory() {}
 
 	int rear = 0;
-	std::thread vTh[4];
+	std::array<std::thread, 6> vTh;
 
 	void operator()(void (*func)())
 	{
 		std::thread th(func);
-		th.detach();
 		vTh[rear] = std::move(th);
 		rear++;
+	}
+	void exit() {
+		for (auto& th : vTh) {
+			th.join();
+		}
+		vTh = {};
+		rear = 0;
 	}
 };
 

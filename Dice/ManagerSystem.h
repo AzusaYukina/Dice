@@ -21,8 +21,7 @@ using std::vector;
 using std::unordered_map;
 constexpr auto CQ_IMAGE = "[CQ:image,file=";
 constexpr auto CQ_AT = "[CQ:at,qq=";
-constexpr time_t NEWYEAR = 1588262400;
-extern string DiceDir;
+constexpr time_t NEWYEAR = 1593532800;
 
 //加载数据
 void loadData();
@@ -252,9 +251,9 @@ public:
 			else CQ::sendDiscussMsg(ID, msg);
 			Sleep(500);
 		}
-		set("已退");
 		if (isGroup)CQ::setGroupLeave(ID);
 		else CQ::setDiscussLeave(ID);
+		set("已退");
 	}
 
 	[[nodiscard]] bool isset(const string& key) const

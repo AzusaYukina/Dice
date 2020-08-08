@@ -11,10 +11,13 @@ unordered_map<string, cmd> mCommand = {
 	{"syscheck",check_system},
 	{"autosave",auto_save},
 	{"clrimage",clear_image},
-	{"reload",cq_restart},
+	{"reload",mirai_reload},
+	{"remake",cq_restart},
 	{"die",cq_exit},
 	{"heartbeat",cloud_beat},
-	{"update",dice_update}
+	{"update",dice_update},
+	{"cloudblack",dice_cloudblack},
+	{"uplog",log_put}
 };
 
 
@@ -38,7 +41,7 @@ void DiceJob::echo(const std::string& msg) {
 	}
 }
 void DiceJob::note(const std::string& strMsg, int note_lv = 0b1) {
-	ofstream fout(string("DiceData\\audit\\log") + to_string(console.DiceMaid) + "_" + printDate() + ".txt", ios::out | ios::app);
+	ofstream fout(DiceDir + "/audit/log" + to_string(console.DiceMaid) + "_" + printDate() + ".txt", ios::out | ios::app);
 	fout << printSTNow() << "\t" << note_lv << "\t" << printLine(strMsg) << std::endl;
 	fout.close();
 	echo(strMsg);
@@ -56,7 +59,7 @@ std::condition_variable cvJob;
 std::condition_variable cvJobWaited;
 //延时任务队列
 using waited_job = pair<time_t, DiceJobDetail>;
-std::priority_queue<waited_job, std::deque<waited_job>> queueJobWaited;
+std::priority_queue<waited_job, std::deque<waited_job>,std::greater<waited_job>> queueJobWaited;
 std::mutex mtJobWaited;
 
 void jobHandle() {
@@ -70,7 +73,7 @@ void jobHandle() {
 			cvJobWaited.notify_one();
 		}
 		else{
-			cvJob.wait(lock_queue, []() {return !queueJob.empty(); });
+			cvJob.wait_for(lock_queue, 2s, []() {return !queueJob.empty(); });
 		}
 	}
 }
@@ -108,12 +111,12 @@ void DiceScheduler::push_job(const char* job_name) {
 void DiceScheduler::add_job_for(unsigned int waited, const DiceJobDetail& job) {
 	if (!Enabled)return;
 	std::unique_lock<std::mutex> lock_queue(mtJobWaited);
-	queueJobWaited.emplace(time(NULL) + waited, job);
+	queueJobWaited.emplace(time(nullptr) + waited, job);
 }
 void DiceScheduler::add_job_for(unsigned int waited, const char* job_name) {
 	if (!Enabled)return;
 	std::unique_lock<std::mutex> lock_queue(mtJobWaited);
-	queueJobWaited.emplace(time(NULL) + waited, job_name);
+	queueJobWaited.emplace(time(nullptr) + waited, job_name);
 }
 
 void DiceScheduler::add_job_until(time_t cloc, const DiceJobDetail& job) {
@@ -126,7 +129,6 @@ void DiceScheduler::add_job_until(time_t cloc, const char* job_name) {
 	std::unique_lock<std::mutex> lock_queue(mtJobWaited);
 	queueJobWaited.emplace(cloc, job_name);
 }
-std::unique_ptr<std::thread> threadJobs;
 
 bool DiceScheduler::is_job_cold(const char* cmd) {
 	return untilJobs[cmd] > time(NULL);
@@ -136,10 +138,8 @@ void DiceScheduler::refresh_cold(const char* cmd, time_t until) {
 }
 
 void DiceScheduler::start() {
-	threadJobs = std::make_unique<std::thread>(jobHandle);
-	threadJobs->detach();
-	std::thread thWaited(jobWait);
-	thWaited.detach();
+	threads(jobHandle);
+	threads(jobWait);
 	push_job("heartbeat");
 	push_job("syscheck");
 	if (console["AutoSaveInterval"] > 0)add_job_for(console["AutoSaveInterval"] * 60, "autosave");
@@ -147,7 +147,6 @@ void DiceScheduler::start() {
 	else add_job_for(60 * 60, "clrimage");
 }
 void DiceScheduler::end() {
-	threadJobs.reset();
 }
 
 void DiceToday::daily_clear() {
@@ -178,4 +177,12 @@ void DiceToday::load() {
 	}
 	if (jFile.count("global")) { jFile["global"].get_to(cntGlobal); }
 	if (jFile.count("user_cnt")) { jFile["user_cnt"].get_to(cntUser); }
+}
+
+string printTTime(time_t tt) {
+	char tm_buffer[20];
+	tm t{};
+	if (!tt || localtime_s(&t, &tt))return "1970-00-00 00:00:00"; 
+	strftime(tm_buffer, 20, "%Y-%m-%d %H:%M:%S", &t);
+	return tm_buffer;
 }

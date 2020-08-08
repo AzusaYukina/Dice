@@ -44,8 +44,7 @@ const std::map<std::string, int, less_ci>Console::intDefault{
 {"ListenFriendRequest",1},{"ListenFriendAdd",1},{"AllowStranger",1},
 {"AutoClearBlack",1},{"LeaveBlackQQ",0},
 {"ListenGroupKick",1},{"ListenGroupBan",1},{"ListenSpam",1},
-{"BannedLeave",0},{"BannedBanInviter",0},
-{"KickedBanInviter",0},
+{"BannedBanInviter",0},{"KickedBanInviter",0},
 {"GroupClearLimit",20},
 {"CloudBlackShare",1},{"BelieveDiceList",0},{"CloudVisible",1},
 {"SystemAlarmCPU",90},{"SystemAlarmRAM",90},{"SystemAlarmDisk",90},
@@ -311,7 +310,7 @@ void getDiceList()
 void getExceptGroup() {
 	std::string list;
 	if (Network::GET("shiki.stringempty.xyz", "/DiceCloud/except_group.json", 80, list))
-		json::parse(list, nullptr, false).get_to(ExceptGroups);
+		readJson(list, ExceptGroups);
 }
 
 
@@ -435,7 +434,7 @@ int clearGroup(string strPara, long long fromQQ)
 				if (blacklist->get_group_danger(id))
 				{
 					res << printGroup(id) + "：" + "黑名单群";
-					if (console["LeaveBlackGroup"])grp.leave(getMsg("strBlackGroup"));
+					grp.leave(getMsg("strBlackGroup"));
 				}
 				vector<GroupMemberInfo> MemberList = getGroupMemberList(id);
 				for (const auto& eachQQ : MemberList)
@@ -537,36 +536,37 @@ EVE_Menu(eventGlobalSwitch)
 EVE_Request_AddFriend(eventAddFriend)
 {
 	if (!console["ListenFriendRequest"])return 0;
-	string strMsg = "好友添加请求，来自：" + printQQ(fromQQ);
+	string strMsg = "好友添加请求，来自 " + printQQ(fromQQ)+ ":";
+	if (msg && msg[0] != '\0') strMsg += msg;
 	this_thread::sleep_for(3s);
 	if (blacklist->get_qq_danger(fromQQ))
 	{
-		strMsg += "，已拒绝（用户在黑名单中）";
+		strMsg += "\n已拒绝（用户在黑名单中）";
 		setFriendAddRequest(responseFlag, 2, "");
 		console.log(strMsg, 0b10, printSTNow());
 	}
 	else if (trustedQQ(fromQQ))
 	{
-		strMsg += "，已同意（受信任用户）";
+		strMsg += "\n已同意（受信任用户）";
 		setFriendAddRequest(responseFlag, 1, "");
 		AddMsgToQueue(getMsg("strAddFriendWhiteQQ"), fromQQ);
 		console.log(strMsg, 1, printSTNow());
 	}
 	else if (console["AllowStranger"] < 2 && !UserList.count(fromQQ))
 	{
-		strMsg += "，已拒绝（无用户记录）";
-		setFriendAddRequest(responseFlag, 2, "");
+		strMsg += "\n已拒绝（无用户记录）";
+		setFriendAddRequest(responseFlag, 2, getMsg("strFriendDenyNotUser").c_str());
 		console.log(strMsg, 1, printSTNow());
 	}
 	else if (console["AllowStranger"] < 1)
 	{
-		strMsg += "，已拒绝（非信任用户）";
-		setFriendAddRequest(responseFlag, 2, "");
+		strMsg += "\n已拒绝（非信任用户）";
+		setFriendAddRequest(responseFlag, 2, getMsg("strFriendDenyNoTrust").c_str());
 		console.log(strMsg, 1, printSTNow());
 	}
 	else
 	{
-		strMsg += "，已同意";
+		strMsg += "\n已同意";
 		setFriendAddRequest(responseFlag, 1, "");
 		AddMsgToQueue(getMsg("strAddFriend"), fromQQ);
 		console.log(strMsg, 1, printSTNow());

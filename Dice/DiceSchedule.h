@@ -17,7 +17,8 @@ struct DiceJobDetail {
     chatType fromChat;
     string cmd_key;
     string strMsg;
-    time_t fromTime = time(NULL);
+    time_t fromTime = time(nullptr);
+    size_t cntExec{ 0 };
     //¡Ÿ ±±‰¡øø‚
     map<string, string> strVar = {};
     DiceJobDetail(const char* cmd, bool isFromSelf = false):cmd_key(cmd){
@@ -26,7 +27,7 @@ struct DiceJobDetail {
     DiceJobDetail(long long qq, chatType ct, std::string msg = "", const char* cmd = "") 
         :fromQQ(qq), fromChat(ct), strMsg(msg),cmd_key(cmd) {
     }
-    string operator[](const char* key){
+    string& operator[](const char* key){
         return strVar[key];
     }
     bool operator<(const DiceJobDetail& other)const {
@@ -83,3 +84,5 @@ public:
     void daily_clear();
 };
 inline std::unique_ptr<DiceToday> today;
+
+string printTTime(time_t tt);

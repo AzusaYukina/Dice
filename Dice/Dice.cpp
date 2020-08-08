@@ -49,6 +49,7 @@
 #include "DiceEvent.h"
 #include "DiceSession.h"
 #include "DiceGUI.h"
+#include "S3PutObject.h"
 
 #pragma warning(disable:4996)
 #pragma warning(disable:6031)
@@ -57,10 +58,14 @@ using namespace std;
 using namespace CQ;
 
 unordered_map<long long, User> UserList{};
-map<chatType, chatType> mLinkedList;
-multimap<chatType, chatType> mFwdList;
 ThreadFactory threads;
 string strFileLoc;
+
+constexpr auto msgInit{ R"(欢迎使用Dice!掷骰机器人！
+请从菜单【Dice!】->【综合管理】开启骰娘的后台面板
+开启Master模式通过认主后即可成为我的主人~
+可发送.help查看帮助
+参考文档参看.help链接)" };
 
 //加载数据
 void loadData()
@@ -125,6 +130,7 @@ void dataInit()
 		for (auto [grp, qq] : ObserveGroup)
 		{
 			gm->session(grp).sOB.insert(qq);
+			gm->session(grp).update();
 		}
 		ifstream ifINIT(strFileLoc + "INIT.DiceDB");
 		if (ifINIT)
@@ -135,11 +141,11 @@ void dataInit()
 			while (ifINIT >> Group >> nickname >> value)
 			{
 				gm->session(Group).mTable["先攻"].emplace(base64_decode(nickname), value);
+				gm->session(Group).update();
 			}
 		}
 		ifINIT.close();
 		console.log("初始化旁观与先攻记录" + to_string(gm->mSession.size()) + "条", 1);
-		gm->save();
 	}
 	today = make_unique<DiceToday>(DiceDir + "/user/DiceToday.json");
 }
@@ -159,7 +165,6 @@ void dataBackUp()
 	saveBFile(DiceDir + "\\user\\PlayerCards.RDconf", PList);
 	saveFile(DiceDir + "\\user\\ChatList.txt", ChatList);
 	saveBFile(DiceDir + "\\user\\ChatConf.RDconf", ChatList);
-	clearUser();
 	saveFile(DiceDir + "\\user\\UserList.txt", UserList);
 	saveBFile(DiceDir + "\\user\\UserConf.RDconf", UserList);
 }
@@ -177,7 +182,18 @@ EVE_Enable(eventEnable)
 	{
 		Mirai = true;
 		Dice_Full_Ver_For = Dice_Full_Ver + " For Mirai]";
-		DiceDir = "Dice" + to_string(getLoginQQ());
+		char buffer[MAX_PATH];
+		const DWORD length = GetModuleFileNameA(nullptr, buffer, sizeof buffer);
+		std::string pathSelf(buffer, length);
+		dirExe = pathSelf.substr(0, pathSelf.find("jre\\bin\\java.exe"));
+		DiceDir = "Dice" + to_string(getLoginQQ());	
+		filesystem::path pathDir(dirExe + DiceDir);
+		DiceDir = dirExe + DiceDir;
+		if (!exists(pathDir)) {
+			filesystem::path pathDirOld(dirExe + "DiceData");
+			if (exists(pathDirOld))rename(pathDirOld, pathDir);
+			else filesystem::create_directory(pathDir);
+		}
 		this_thread::sleep_for(3s); //确保Mirai异步信息加载执行完毕
 	}
 	console.setPath(DiceDir + "\\conf\\Console.xml");
@@ -212,12 +228,7 @@ EVE_Enable(eventEnable)
 		}
 		else
 		{
-			sendPrivateMsg(console.DiceMaid,
-			               R"(欢迎使用Dice!掷骰机器人！
-右键点击酷Q->【应用管理】->【菜单】->【Master模式切换】可开启Master模式，开启对骰娘的后台功能
-文档: https://v2docs.kokona.tech
-更多文件参看.help链接
-)");
+			sendPrivateMsg(console.DiceMaid, msgInit);
 		}
 		ifstreamMaster.close();
 		std::map<string, int> boolConsole;
@@ -226,7 +237,7 @@ EVE_Enable(eventEnable)
 		{
 			console.set(key, val);
 		}
-		console.setClock({ 5, 5 }, ClockEvent::clear);
+		console.setClock({ 11, 45 }, ClockEvent::clear);
 		console.loadNotice();
 		console.save();
 	}
@@ -393,7 +404,9 @@ EVE_Enable(eventEnable)
 		blacklist->saveJson(DiceDir + "\\conf\\BlackList.json");
 		console.log("初始化不良记录" + to_string(cnt) + "条", 1);
 	}
-
+	else {
+		blacklist->loadJson(DiceDir + "\\conf\\BlackListEx.json", true);
+	}
 	fmt = make_unique<DiceModManager>();
 	if (loadJMap(DiceDir + "\\conf\\CustomMsg.json", EditedMsg) < 0)loadJMap(strFileLoc + "CustomMsg.json", EditedMsg);
 	//预修改出场回复文本
@@ -434,17 +447,18 @@ EVE_Enable(eventEnable)
 	dataInit();
 	// 确保线程执行结束
 	while (msgSendThreadRunning)Sleep(10);
+	Aws::InitAPI(options);
 	Enabled = true;
 	threads(SendMsg);
 	threads(ConsoleTimer);
 	threads(warningHandler);
 	threads(frqHandler);
 	sch.start();
+	console.log(GlobalMsg["strSelfName"] + "初始化完成，用时" + to_string((clock() - llStartTime) / 1000) + "秒", 0b1,
+				printSTNow());
 	//骰娘网络
 	getDiceList();
 	getExceptGroup();
-	console.log(GlobalMsg["strSelfName"] + "初始化完成，用时" + to_string((clock() - llStartTime) / 1000) + "秒", 0b1, 
-		printSTNow());
 	llStartTime = clock();
 	return 0;
 }
@@ -456,8 +470,8 @@ bool eve_GroupAdd(Chat& grp)
 	{
 		unique_lock<std::mutex> lock_queue(GroupAddMutex);
 		if (grp.isset("未进") || grp.isset("已退"))grp.reset("未进").reset("已退");
-		else if (time(nullptr) - grp.tCreated > 1)return false;
-		lock_queue.unlock();
+		else return false;
+		if (ChatList.size() == 1 && !console.isMasterMode)sendGroupMsg(grp.ID, msgInit);
 	}
 	GroupInfo ginf(grp.ID);
 	grp.Name = ginf.strGroupName;
@@ -558,7 +572,7 @@ bool eve_GroupAdd(Chat& grp)
 			else 
 			{
 				ave_trust /= cntMember;
-				strMsg += "\n用户浓度" + to_string(cntUser * 100 / cntMember) + "%, 信任度" + toString(ave_trust);
+				strMsg += "\n用户浓度" + to_string(cntUser * 100 / cntMember) + "% (" + to_string(cntUser) + "/" + to_string(cntMember) + "), 信任度" + toString(ave_trust);
 			}
 		}
 		if (!blacks.empty())
@@ -612,7 +626,6 @@ EVE_PrivateMsg_EX(eventPrivateMsg)
 	if (!Enabled)return;
 	FromMsg Msg(eve.message, eve.fromQQ);
 	if (Msg.DiceFilter())eve.message_block();
-	Msg.FwdMsg(eve.message);
 }
 
 EVE_GroupMsg_EX(eventGroupMsg)
@@ -626,7 +639,6 @@ EVE_GroupMsg_EX(eventGroupMsg)
 	{
 		FromMsg Msg(eve.message, eve.fromGroup, msgtype::Group, eve.fromQQ);
 		if (Msg.DiceFilter())eve.message_block();
-		Msg.FwdMsg(eve.message);
 	}
 	if (grp.isset("拦截消息"))eve.message_block();
 }
@@ -652,7 +664,6 @@ EVE_DiscussMsg_EX(eventDiscussMsg)
 	}
 	FromMsg Msg(eve.message, eve.fromDiscuss, msgtype::Discuss, eve.fromQQ);
 	if (Msg.DiceFilter() || grp.isset("拦截消息"))eve.message_block();
-	Msg.FwdMsg(eve.message);
 }
 
 EVE_System_GroupMemberIncrease(eventGroupMemberIncrease)
@@ -903,9 +914,9 @@ EVE_Menu(eventGUI)
 	return GUIMain();
 }
 
-EVE_Disable(eventDisable)
-{
+void global_exit() {
 	Enabled = false;
+	threads.exit();
 	threads = {};
 	dataBackUp();
 	sch.end();
@@ -917,6 +928,12 @@ EVE_Disable(eventDisable)
 	console.reset();
 	EditedMsg.clear();
 	blacklist.reset();
+	Aws::ShutdownAPI(options);
+}
+
+EVE_Disable(eventDisable)
+{
+	global_exit();
 	return 0;
 }
 
@@ -924,7 +941,7 @@ EVE_Exit(eventExit)
 {
 	if (!Enabled)
 		return 0;
-	dataBackUp();
+	global_exit();
 	return 0;
 }
 

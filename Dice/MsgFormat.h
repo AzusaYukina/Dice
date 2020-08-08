@@ -92,6 +92,7 @@ class ResList
 	unsigned int intMaxLen = 0;
 	bool isLineBreak = false;
 	unsigned int intLineLen = 16;
+	unsigned int intPageLen = 512;
 	string sDot = " ";
 	string strLongSepa = "\n";
 public:
@@ -112,27 +113,7 @@ public:
 		return *this;
 	}
 
-	std::string show()
-	{
-		std::string s;
-		if (intMaxLen > intLineLen || isLineBreak)
-		{
-			for (auto it = vRes.begin(); it != vRes.end(); it++)
-			{
-				if (it == vRes.begin())s = "\n" + *it;
-				else s += strLongSepa + *it;
-			}
-		}
-		else
-		{
-			for (auto it = vRes.begin(); it != vRes.end(); it++)
-			{
-				if (it == vRes.begin())s = *it;
-				else s += sDot + *it;
-			}
-		}
-		return s;
-	}
+	std::string show()const;
 
 	ResList& dot(string s)
 	{
