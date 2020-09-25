@@ -19,6 +19,8 @@
 #include "ManagerSystem.h"
 #include "MsgFormat.h"
 #include "CardDeck.h"
+#include "DiceEvent.h"
+
 using std::string;
 using std::to_string;
 using std::vector;
@@ -778,9 +780,17 @@ public:
 		std::lock_guard<std::mutex> lock_queue(cardMutex);
 		if (!mNameIndex.count(name))return -5;
 		if (!mNameIndex[name])return -7;
-		for (auto it : mGroupIndex)
+		auto it = mGroupIndex.cbegin();
+		while (it != mGroupIndex.cend())
 		{
-			if (it.second == mNameIndex[name])mGroupIndex.erase(it.first);
+			if (it->second == mNameIndex[name])
+			{
+				it = mGroupIndex.erase(it);
+			}
+			else
+			{
+				++it;
+			}
 		}
 		mCardList.erase(mNameIndex[name]);
 		while (!mCardList.count(indexMax))indexMax--;
@@ -830,7 +840,7 @@ public:
 	string listMap()
 	{
 		ResList Res;
-		for (auto it : mGroupIndex)
+		for (const auto& it : mGroupIndex)
 		{
 			if (!it.first)Res << "default:" + mCardList[it.second].Name;
 			else Res << "(" + to_string(it.first) + ")" + mCardList[it.second].Name;
@@ -915,7 +925,7 @@ public:
 		}
 		pack.add(cards);
 		Unpack groups;
-		for (auto it : mGroupIndex)
+		for (const auto& it : mGroupIndex)
 		{
 			groups.add(static_cast<long long>(it.first));
 			groups.add(it.second);
@@ -947,4 +957,4 @@ inline map<long long, Player> PList;
 
 Player& getPlayer(long long qq);
 
-string getPCName(long long qq, long long group);
+void getPCName(FromMsg&);

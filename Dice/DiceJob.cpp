@@ -4,11 +4,13 @@
 #include <TlHelp32.h>
 #include <Psapi.h>
 #include "StrExtern.hpp"
+#include "CQAPI.h"
 #include "ManagerSystem.h"
 #include "DiceCloud.h"
 #include "BlackListManager.h"
 #include "GlobalVar.h"
 #include "CardDeck.h"
+#include "S3PutObject.h"
 #pragma warning(disable:28159)
 
 using namespace std;
@@ -47,13 +49,17 @@ void cq_exit(DiceJob& job) {
 	dataBackUp();
 	system(strCMD.c_str());
 }
+
+inline PROCESSENTRY32 getProcess(int pid) {
+	PROCESSENTRY32 pe32;
+	pe32.dwSize = sizeof(pe32);
+	HANDLE hParentProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+	Process32First(hParentProcess, &pe32);
+	return pe32;
+}
 void cq_restart(DiceJob& job) {
-	char** path = new char* ();
-	_get_pgmptr(path);
-	string strSelfPath(*path);
-	delete path;
+	//string strSelfPath;
 	string strSelfName;
-	int pid = _getpid();
 	PROCESSENTRY32 pe32;
 	pe32.dwSize = sizeof(pe32);
 	HANDLE hProcessSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -62,27 +68,57 @@ void cq_restart(DiceJob& job) {
 	}
 	BOOL bResult = Process32First(hProcessSnap, &pe32);
 	int ppid(0);
-	while (bResult) {
-		if (pe32.th32ProcessID == pid) {
-			ppid = pe32.th32ParentProcessID;
-			job.echo("确认进程" + strSelfPath + "\n本进程id:" + to_string(pe32.th32ProcessID) + "\n父进程id:" + to_string(pe32.th32ParentProcessID));
-			strSelfName = pe32.szExeFile;
-			break;
+	if (frame == QQFrame::Mirai) {
+		strSelfName = "MiraiOK.exe";
+		char buffer[MAX_PATH];
+		const DWORD length = GetModuleFileNameA(nullptr, buffer, sizeof buffer);
+		std::string pathSelf(buffer, length);
+		pathSelf = pathSelf.substr(0, pathSelf.find("jre\\bin\\java.exe")) + strSelfName;
+		char pathFull[MAX_PATH];
+		while (bResult) {
+			if (strSelfName == pe32.szExeFile) {
+				HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pe32.th32ProcessID);
+				GetModuleFileNameEx(hProcess, NULL, pathFull, sizeof(pathFull));
+				if (pathSelf != pathFull)continue;
+				ppid = pe32.th32ProcessID;
+				job.echo("确认进程" + pathSelf + "\n进程id:" + to_string(ppid));
+				break;
+			}
+			bResult = Process32Next(hProcessSnap, &pe32);
 		}
-		bResult = Process32Next(hProcessSnap, &pe32);
+		if (!ppid) {
+			job.echo("未找到进程" + pathSelf);
+			return;
+		}
+	}
+	else {
+		int pid = _getpid();
+		while (bResult) {
+			if (pe32.th32ProcessID == pid) {
+				ppid = pe32.th32ParentProcessID;
+				PROCESSENTRY32 pp32 = getProcess(ppid);
+				strSelfName = pp32.szExeFile;
+				job.echo("确认进程" + strSelfName + "\n本进程id:" + to_string(pe32.th32ProcessID) + "\n父进程id:" + to_string(ppid));
+				break;
+			}
+			bResult = Process32Next(hProcessSnap, &pe32);
+		}
 	}
 	if (!ppid) {
 		job.note("重启失败：未找到进程！", 1);
+		return;
 	}
-	string command = "taskkill /f /pid " + to_string(ppid) + "\nstart .\\" + strSelfName + " /account " + to_string(console.DiceMaid);
-	ofstream fout("reload.bat");
+	string command = "taskkill /f /pid " + to_string(ppid) + " /t\nstart .\\" + strSelfName;
+	if (frame == QQFrame::CoolQ) command += " /account " + to_string(console.DiceMaid);
+	ofstream fout("remake.bat");
 	fout << command << std::endl;
 	fout.close();
 	job.note(command, 0);
 	std::this_thread::sleep_for(3s);
 	Enabled = false;
 	dataBackUp();
-	switch (UINT res = -1; res = WinExec(".\\reload.bat", SW_SHOW)) {
+	std::this_thread::sleep_for(3s);
+	switch (UINT res = -1; res = WinExec(".\\remake.bat", SW_SHOW)) {
 	case 0:
 		job.note("重启失败：内存或资源已耗尽！", 1);
 		break;
@@ -97,6 +133,23 @@ void cq_restart(DiceJob& job) {
 		else job.note("重启失败：未知错误" + to_string(res), 0);
 		break;
 	}
+}
+
+void frame_reload(DiceJob& job){
+	using cq_reload_type = int(__stdcall*)(int32_t);
+	HMODULE hModule = GetModuleHandleA("CQP.dll");
+	cq_reload_type cq_reload = (cq_reload_type)GetProcAddress(hModule, "CQ_reload");
+	if (!cq_reload) {
+		if (frame == QQFrame::Mirai)
+			job.note("重载MiraiNative失败×\n使用了过旧或不适配的CQP.dll\n请保证更新适配版本的MiraiNative并删除旧CQP.dll", 0b10);
+		else if (frame == QQFrame::XianQu)
+			job.note("重载CQXQ失败×\n版本过旧，请保证更新适配版本的CQXQ", 0b10);
+		return;
+	}
+	if(cq_reload(getAuthCode()))
+		job.note("重载" + getMsg("self") + "完成√", 1);
+	else
+		job.note("重载" + getMsg("self") + "失败×", 0b10);
 }
 
 void auto_save(DiceJob& job) {
@@ -195,10 +248,9 @@ void clear_image(DiceJob& job) {
 void clear_group(DiceJob& job) {
 	int intCnt = 0;
 	ResList res;
-	std::map<string, string>strVar;
 	if (job.strVar["clear_mode"] == "unpower") {
 		for (auto& [id, grp] : ChatList) {
-			if (grp.isset("忽略") || grp.isset("已退") || grp.isset("未进") || grp.isset("免清"))continue;
+			if (grp.isset("忽略") || grp.isset("已退") || grp.isset("未进") || grp.isset("免清") || grp.isset("协议无效"))continue;
 			if (grp.isGroup && getGroupMemberInfo(id, console.DiceMaid).permissions == 1) {
 				res << printGroup(id);
 				grp.leave(getMsg("strLeaveNoPower"));
@@ -213,15 +265,15 @@ void clear_group(DiceJob& job) {
 		string strDayLim = to_string(intDayLim);
 		time_t tNow = time(NULL);
 		for (auto& [id, grp] : ChatList) {
-			if (grp.isset("忽略") || grp.isset("已退") || grp.isset("未进") || grp.isset("免清"))continue;
-			time_t tLast = grp.tLastMsg;
-			if (int tLMT; grp.isGroup && (tLMT = getGroupMemberInfo(id, console.DiceMaid).LastMsgTime) > 0)tLast = tLMT;
+			if (grp.isset("忽略") || grp.isset("已退") || grp.isset("未进") || grp.isset("免清") || grp.isset("协议无效"))continue;
+			time_t tLast = grp.tUpdated;
+			if (int tLMT; grp.isGroup && (tLMT = getGroupMemberInfo(id, console.DiceMaid).LastMsgTime) > 0 && tLMT > tLast)tLast = tLMT;
 			if (!tLast)continue;
 			int intDay = (int)(tNow - tLast) / 86400;
 			if (intDay > intDayLim) {
-				strVar["day"] = to_string(intDay);
+				job["day"] = to_string(intDay);
 				res << printGroup(id) + ":" + to_string(intDay) + "天\n";
-				grp.leave(getMsg("strLeaveUnused", strVar));
+				grp.leave(getMsg("strLeaveUnused", job.strVar));
 				intCnt++;
 				this_thread::sleep_for(2s);
 			}
@@ -232,7 +284,7 @@ void clear_group(DiceJob& job) {
 		try {
 			for (auto& [id, grp_name] : getGroupList()) {
 				Chat& grp = chat(id).group().name(grp_name);
-				if (grp.isset("忽略") || grp.isset("已退") || grp.isset("未进") || grp.isset("免清") || grp.isset("免黑"))continue;
+				if (grp.isset("忽略") || grp.isset("已退") || grp.isset("未进") || grp.isset("免清") || grp.isset("免黑") || grp.isset("协议无效"))continue;
 				if (blacklist->get_group_danger(id)) {
 					res << printGroup(id) + "：" + "黑名单群";
 					if (console["LeaveBlackGroup"])grp.leave(getMsg("strBlackGroup"));
@@ -271,7 +323,7 @@ void clear_group(DiceJob& job) {
 	}
 	else if (job["clear_mode"] == "preserve") {
 		for (auto& [id, grp] : ChatList) {
-			if (grp.isset("忽略") || grp.isset("已退") || grp.isset("未进") || grp.isset("使用许可") || grp.isset("免清"))continue;
+			if (grp.isset("忽略") || grp.isset("已退") || grp.isset("未进") || grp.isset("使用许可") || grp.isset("免清") || grp.isset("协议无效"))continue;
 			if (grp.isGroup && getGroupMemberInfo(id, console.master()).permissions) {
 				grp.set("使用许可");
 				continue;
@@ -286,6 +338,61 @@ void clear_group(DiceJob& job) {
 	else
 		job.echo("无法识别筛选参数×");
 }
+void list_group(DiceJob& job) {
+	if (mChatConf.count(job["list_mode"])) {
+		ResList res;
+		for (auto& [id, grp] : ChatList) {
+			if (grp.isset(job["list_mode"])) {
+				res << printChat(grp);
+			}
+		}
+		job.reply("{self}含词条" + job["list_mode"] + "群记录" + to_string(res.size()) + "条" + res.head(":").show());
+	}
+	else if (job["list_mode"] == "idle") {
+		std::priority_queue<std::pair<time_t, string>> qDiver;
+		time_t tNow = time(NULL);
+		for (auto& [id, grp] : ChatList) {
+			if (grp.isset("已退") || grp.isset("未进"))continue;
+			time_t tLast = grp.tUpdated;
+			if (int tLMT; grp.isGroup && (tLMT = getGroupMemberInfo(id, console.DiceMaid).LastMsgTime) > 0 && tLMT > tLast)tLast = tLMT;
+			if (!tLast)continue;
+			int intDay = (int)(tNow - tLast) / 86400;
+			qDiver.emplace(intDay, printGroup(id));
+		}
+		if (qDiver.empty()) {
+			job.reply("{self}无群聊或群信息加载失败！");
+		}
+		size_t intCnt(0);
+		ResList res;
+		while (!qDiver.empty()) {
+			res << qDiver.top().second + to_string(qDiver.top().first) + "天";
+			qDiver.pop();
+			if (++intCnt > 64 || intCnt > qDiver.size() || qDiver.top().first < 7)break;
+		}
+		job.reply("{self}所在闲置群列表:" + res.show());
+	}
+	else if (job["list_mode"] == "size") {
+		std::priority_queue<std::pair<time_t, string>> qSize;
+		time_t tNow = time(NULL);
+		for (auto& [id, grp] : ChatList) {
+			if (grp.isset("已退") || grp.isset("未进") || !grp.isGroup)continue;
+			GroupInfo ginfo(id);
+			if (!ginfo.nGroupSize)continue;
+			qSize.emplace(ginfo.nGroupSize, printGroup(id));
+		}
+		if (qSize.empty()) {
+			job.reply("{self}无群聊或群信息加载失败！");
+		}
+		size_t intCnt(0);
+		ResList res;
+		while (!qSize.empty()) {
+			res << qSize.top().second + "[" + to_string(qSize.top().first) + "]";
+			qSize.pop();
+			if (++intCnt > 64 || intCnt > qSize.size() || qSize.top().first < 7)break;
+		}
+		job.reply("{self}所在大群列表:" + res.show(1));
+	}
+}
 
 //心跳检测
 void cloud_beat(DiceJob& job) {
@@ -295,25 +402,93 @@ void cloud_beat(DiceJob& job) {
 
 void dice_update(DiceJob& job) {
 	job.note("开始更新Dice\n版本:" + job.strVar["ver"], 1);
-	char** path = new char* ();
-	_get_pgmptr(path);
-	string strAppPath(*path);
-	strAppPath = strAppPath.substr(0, strAppPath.find_last_of("\\")) + "\\app\\com.w4123.dice.cpk";
-	delete path;
-	string strURL("http://shiki.stringempty.xyz/DiceVer/" + job.strVar["ver"] + "?" + to_string(job.fromTime));
-	switch (Cloud::DownloadFile(strURL.c_str(), strAppPath.c_str())) {
+	if (frame == QQFrame::Mirai) {
+		mkDir(dirExe + "plugins/MiraiNative/pluginsnew");
+		char pathDll[] = "plugins/MiraiNative/pluginsnew/com.w4123.dice.dll";
+		char pathJson[] = "plugins/MiraiNative/pluginsnew/com.w4123.dice.json";
+		string urlDll("https://shiki.stringempty.xyz/DiceVer/" + job.strVar["ver"] + "/com.w4123.dice.dll?" + to_string(job.fromTime));
+		string urlJson("https://shiki.stringempty.xyz/DiceVer/" + job.strVar["ver"] + "/com.w4123.dice.json?" + to_string(job.fromTime));
+		switch (Cloud::DownloadFile(urlDll.c_str(), pathDll)) {
+		case -1:
+			job.echo("更新失败:" + urlDll);
+			break;
+		case -2:
+			job.note("更新Dice失败!dll文件未下载到指定位置", 0b1);
+			break;
+		case 0:
+		default:
+			switch (Cloud::DownloadFile(urlJson.c_str(), pathJson)) {
+			case -1:
+				job.echo("更新失败:" + urlJson);
+				break;
+			case -2:
+				job.note("更新Dice失败!json文件未下载到指定位置", 0b1);
+				break;
+			case 0:
+			default:
+				job.note("更新Dice!" + job.strVar["ver"] + "版成功√", 1);
+			}
+		}
+	}
+	else {
+		char** path = new char* ();
+		_get_pgmptr(path);
+		string strAppPath(*path);
+		delete path;
+		strAppPath = strAppPath.substr(0, strAppPath.find_last_of("\\")) + "\\app\\com.w4123.dice.cpk";
+		string strURL("https://shiki.stringempty.xyz/DiceVer/" + job.strVar["ver"] + "?" + to_string(job.fromTime));
+		switch (Cloud::DownloadFile(strURL.c_str(), strAppPath.c_str())) {
+		case -1:
+			job.echo("更新失败:" + strURL);
+			break;
+		case -2:
+			job.note("更新Dice失败!文件未找到:" + strAppPath, 0b10);
+			break;
+		case 0:
+			job.note("更新Dice!" + job.strVar["ver"] + "版成功√\n可用.system reload 重启应用更新", 1);
+		}
+	}
+}
+
+//获取云不良记录
+void dice_cloudblack(DiceJob& job) {
+	job.echo("开始获取云端记录"); 
+	string strURL("https://shiki.stringempty.xyz/blacklist/checked.json?" + to_string(job.fromTime));
+	switch (Cloud::DownloadFile(strURL.c_str(), (DiceDir + "/conf/CloudBlackList.json").c_str())) {
 	case -1:
-		job.echo("更新失败:" + strURL);
+		job.echo("同步云不良记录同步失败:" + strURL);
 		break;
 	case -2:
-		job.echo("更新失败!文件未找到:" + strAppPath);
+		job.echo("同步云不良记录同步失败!文件未找到");
 		break;
 	case 0:
-		job.note("更新Dice!" + job.strVar["ver"] + "版成功√\n可用.system reload 重启应用更新", 1);
+		job.note("同步云不良记录成功，" + getMsg("self") + "开始读取", 1);
+		blacklist->loadJson(DiceDir + "/conf/CloudBlackList.json", true);
+	}
+	if (console["CloudBlackShare"])
+		sch.add_job_for(24 * 60 * 60, "cloudblack");
+}
+
+void log_put(DiceJob& job) {
+	job["ret"] = put_s3_object("dicelogger",
+							   job.strVar["log_file"],
+							   job.strVar["log_path"],
+							   "ap-southeast-1");
+	if (job["ret"] == "SUCCESS") {
+		job.echo(getMsg("strLogUpSuccess", job.strVar));
+	}
+	else if (job.cntExec++ > 1) {
+		job.echo(getMsg("strLogUpFailureEnd",job.strVar));
+	}
+	else {
+		job["retry"] = to_string(job.cntExec);
+		job.echo(getMsg("strLogUpFailure", job.strVar));
+		sch.add_job_for(2 * 60, job);
 	}
 }
 
 string print_master() {
+	if (!console.master())return "（无主）";
 	return printQQ(console.master());
 }
 

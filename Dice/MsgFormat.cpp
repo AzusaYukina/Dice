@@ -25,16 +25,17 @@
 #include <fstream>//
 #include "DiceJob.h"
 #include "EncodingConvert.h"
+#include "StrExtern.hpp"
 using std::string;
 
 std::map<string, string> GlobalChar{
-	{"FormFeed","\f…"},
+	{"FormFeed","\f"},
 };
 
 std::map<string, GobalTex> strFuncs{
 	{"master_QQ",print_master},
-	{"扩展牌堆",list_extern_deck},
-	{"全牌堆列表",list_deck},
+	{"list_extern_deck",list_extern_deck},
+	{"list_all_deck",list_deck},
 };
 
 std::string format(std::string str, const std::initializer_list<const std::string>& replace_str)
@@ -78,4 +79,40 @@ std::string to_binary(int b)
 		if (b & (1 << i))res << std::to_string(i);
 	}
 	return res.dot("+").show();
+}
+
+unsigned int ResList::intPageLen = 255;
+ResList& ResList::operator<<(std::string s) {
+	while (isspace(static_cast<unsigned char>(s[0])))s.erase(s.begin());
+	if (s.empty())return *this;
+	vRes.push_back(s);
+	if (size_t len = wstrlen(s.c_str());len > intMaxLen)intMaxLen = len;
+	return *this;
+}
+std::string ResList::show(size_t limPage)const {
+	if (empty())return {};
+	std::string s, strHead, strSepa;
+	unsigned int lenPage(0), cntPage(0), lenItem(0);
+	if (intMaxLen > intLineLen || isLineBreak) {
+		strHead = sHead + "\n";
+		strSepa = strLongSepa;
+	}
+	else {
+		strSepa = sDot;
+	}
+	for (auto it = vRes.begin(); it != vRes.end(); it++) {
+		lenItem = wstrlen(it->c_str());
+		//超过上限后分页
+		if (lenPage + lenItem > intPageLen && !s.empty()) {
+			if (limPage && limPage <= cntPage + 1)
+				return s;
+			if (cntPage++ == 0)s = "\f[第" + std::to_string(cntPage++) + "页]" + (strHead.empty() ? "\n" : "") + s;
+			s += "\f[第" + std::to_string(cntPage) + "页]\n" + *it;
+			lenPage = 0;
+		}
+		else if (it == vRes.begin())s = strHead + *it;
+		else s += strSepa + *it;
+		lenPage += lenItem;
+	}
+	return s;
 }

@@ -25,6 +25,7 @@
 #define DICE_MSG_FORMAT
 #include <string>
 #include <map>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 using std::string;
@@ -37,7 +38,7 @@ std::string format(std::string str, const std::initializer_list<const std::strin
 
 template <typename sort>
 std::string format(std::string s, const std::map<std::string, std::string, sort>& replace_str,
-                   const std::map<std::string, std::string>& str_tmp = {})
+                   const std::unordered_map<std::string, std::string>& str_tmp = {})
 {
 	if (s[0] == '&')
 	{
@@ -47,9 +48,9 @@ std::string format(std::string s, const std::map<std::string, std::string, sort>
 		{
 			return format(it->second, replace_str, str_tmp);
 		}
-		if ((it = str_tmp.find(key)) != str_tmp.end())
+		if (auto uit = str_tmp.find(key); uit != str_tmp.end())
 		{
-			return it->second;
+			return uit->second;
 		}
 	}
 	int l = 0, r = 0;
@@ -70,10 +71,10 @@ std::string format(std::string s, const std::map<std::string, std::string, sort>
 		{
 			val = it->second;
 		}
-		else if ((it = str_tmp.find(key)) != str_tmp.end())
+		else if (auto uit = str_tmp.find(key); uit != str_tmp.end())
 		{
-			if (key == "res")val = format(it->second, replace_str, str_tmp);
-			else val = it->second;
+			if (key == "res")val = format(uit->second, replace_str, str_tmp);
+			else val = uit->second;
 		}
 		else if (auto func = strFuncs.find(key); func != strFuncs.end())
 		{
@@ -91,7 +92,9 @@ class ResList
 	std::vector<std::string> vRes;
 	unsigned int intMaxLen = 0;
 	bool isLineBreak = false;
-	unsigned int intLineLen = 16;
+	unsigned int intLineLen = 10;
+	static unsigned int intPageLen;
+	string sHead = "";
 	string sDot = " ";
 	string strLongSepa = "\n";
 public:
@@ -103,37 +106,14 @@ public:
 		intMaxLen = s.length();
 	}
 
-	ResList& operator<<(std::string s)
-	{
-		while (isspace(static_cast<unsigned char>(s[0])))s.erase(s.begin());
-		if (s.empty())return *this;
-		vRes.push_back(s);
-		if (s.length() > intMaxLen)intMaxLen = s.length();
+	ResList& operator<<(std::string s);
+
+	std::string show(size_t = 0)const;
+
+	ResList& head(string s) {
+		sHead = s;
 		return *this;
 	}
-
-	std::string show()
-	{
-		std::string s;
-		if (intMaxLen > intLineLen || isLineBreak)
-		{
-			for (auto it = vRes.begin(); it != vRes.end(); it++)
-			{
-				if (it == vRes.begin())s = "\n" + *it;
-				else s += strLongSepa + *it;
-			}
-		}
-		else
-		{
-			for (auto it = vRes.begin(); it != vRes.end(); it++)
-			{
-				if (it == vRes.begin())s = *it;
-				else s += sDot + *it;
-			}
-		}
-		return s;
-	}
-
 	ResList& dot(string s)
 	{
 		sDot = std::move(s);

@@ -10,12 +10,13 @@
 #include "CardDeck.h"
 #include "GlobalVar.h"
 
+string dirExe;
 string DiceDir = "DiceData";
  //被引用的图片列表
 unordered_set<string> sReferencedImage;
 
 const map<string, short> mChatConf{
-	//0-群管理员，2-白名单2级，3-白名单3级，4-管理员，5-系统操作
+	//0-群管理员，2-信任2级，3-信任3级，4-管理员，5-系统操作
 	{"忽略", 4},
 	{"拦截消息", 0},
 	{"停用指令", 0},
@@ -29,7 +30,7 @@ const map<string, short> mChatConf{
 	{"未审核", 1},
 	{"免清", 2},
 	{"免黑", 4},
-	{"协议无效", 4},
+	{"协议无效", 3},
 	{"未进", 5},
 	{"已退", 5}
 };
@@ -108,6 +109,13 @@ void filter_CQcode(string& nick, long long fromGroup)
 		}
 		else return;
 	}
+	while ((posL = nick.find(CQ_IMAGE)) != string::npos) {
+		//检查at格式
+		if (size_t posR = nick.find(']', posL); posR != string::npos) {
+			nick.replace(posL, posR - posL + 1, "[图片]");
+		}
+		else return;
+	}
 	while ((posL = nick.find("[CQ:")) != string::npos)
 	{
 		if (size_t posR = nick.find(']', posL); posR != string::npos) 
@@ -125,15 +133,23 @@ Chat& chat(long long id)
 }
 Chat& Chat::id(long long grp) {
 	ID = grp;
-	if (CQ::getGroupList().count(grp)) {
-		CQ::GroupInfo ginfo(grp);
+	if (!Enabled)return *this;
+	if (CQ::GroupInfo ginfo(grp); ginfo.llGroup || CQ::getGroupList().count(grp)) {
+		
 		Name = ginfo.strGroupName;
 		isGroup = true;
 		if (ExceptGroups.count(grp) || ginfo.nGroupSize > 499) {
 			boolConf.insert("协议无效");
 		}
 	}
+	else {
+		boolConf.insert("未进");
+	}
 	return *this;
+}
+
+bool Chat::is_except()const {
+	return boolConf.count("免黑") || boolConf.count("协议无效");
 }
 
 int groupset(long long id, string st)

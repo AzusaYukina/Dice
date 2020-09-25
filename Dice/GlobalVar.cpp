@@ -25,11 +25,10 @@
 #include "CQLogger.h"
 #include "GlobalVar.h"
 #include "MsgFormat.h"
-#include <map>
 
 bool Enabled = false;
 
-bool Mirai = false;
+QQFrame frame{ QQFrame::CoolQ };
 
 std::string Dice_Full_Ver_For = Dice_Full_Ver + " For CoolQ]";
 
@@ -47,6 +46,17 @@ std::map<std::string, std::string> GlobalMsg
 	{"strParaIllegal","参数非法×"},			//偷懒用万能回复
 	{"stranger","用户"},			//{nick}无法获取非空昵称时的称呼
 	{"strAdminOptionEmpty","找{self}有什么事么？{nick}"},			//
+	{"strLogNew","{self}开始新日志记录√\n请适时用.log off暂停或.log end完成记录"},
+	{"strLogOn","{self}开始日志记录√\n可使用.log off暂停记录"},
+	{"strLogOnAlready","{self}正在记录中！"},
+	{"strLogOff","{self}已暂停日志记录√\n可使用.log on恢复记录"},
+	{"strLogOffAlready","{self}已经暂停记录！"},
+	{"strLogEnd","{self}已完成日志记录√\n正在上传日志文件{log_file}"},
+	{"strLogEndEmpty","{self}已结束记录√\n本次无日志产生"},
+	{"strLogNullErr","{self}无日志记录或已结束！"},
+	{"strLogUpSuccess","{self}已完成日志上传√\n请访问 https://logpainter.kokona.tech/?s3={log_file} 以查看记录"},
+	{"strLogUpFailure","{self}上传日志文件失败，正在第{retry}次重试…{ret}"},
+	{"strLogUpFailureEnd","很遗憾，{self}无法成功上传日志文件×\n{ret}\n如需获取可联系Master:{master_QQ}\n文件名:{log_file}"},
 	{"strGMTableShow","{self}记录的{table_name}列表："},
 	{"strGMTableNotExist","{self}没有保存的{table_name}记录"},
 	{"strUserTrustShow","{user}在{self}处的信任级别为{trust}"},
@@ -55,7 +65,7 @@ std::map<std::string, std::string> GlobalMsg
 	{"strUserTrustIllegal","将目标权限修改为{trust}是非法的×"},
 	{"strUserNotFound","{self}无{user}的用户记录"},
 	{"strGroupAuthorized","A roll to the table turns to a dice fumble!\nDice Roller {strSelfName}√\n本群已授权许可，请尽情使用本骰娘√\n请遵守协议使用，服务结束后使用.dismiss送出!" },
-	{"strGroupLicenseDeny","本群未获{self}许可使用，自动在群内静默。\n请先.help协议 阅读并同意协议后向运营方申请许可使用，\n否则请管理员使用!dismiss送出{self}\n可按以下格式填写并发送申请:\n!authorize 申请用途:[*请写入理由*] 我已了解Dice!基本用法，仔细阅读并保证遵守{strSelfName}的用户协议，如需停用指令使用[*请写入指令*]，用后使用[*请写入指令*]送出群" },
+	{"strGroupLicenseDeny","本群未获{self}许可使用，自动在群内静默。\n请先.help协议 阅读并同意协议后向运营方申请许可使用，\n否则请管理员使用!dismiss送出{self}\n可按以下格式填写并发送申请:\n!authorize 申请用途:[ **请写入理由** ] 我已了解Dice!基本用法，仔细阅读并保证遵守{strSelfName}的用户协议，如需停用指令使用[ **请写入指令** ]，用后使用[ **请写入指令** ]送出群" },
 	{"strGroupLicenseApply","此群未通过自助授权×\n许可申请已发送√" },
 	{"strGroupSetOn","现已开启{self}在此群的“{option}”选项√"},			//群内开关和遥控开关通用此文本
 	{"strGroupSetOnAlready","{self}已在此群设置了{option}！"},			
@@ -96,13 +106,15 @@ std::map<std::string, std::string> GlobalMsg
 	{"strPcTempInvalid","{self}无法识别的角色卡模板×"},
 	{"strPcNameEmpty","名称不能为空×"},
 	{"strPcNameExist","{nick}已存在同名卡×"},
-	{"strPcNameNotExist","{nick}无该名称角色卡卡×"},
+	{"strPcNameNotExist","{nick}无该名称角色卡×"},
 	{"strPcNameInvalid","非法的角色卡名（存在冒号）×"},
 	{"strPcInitDelErr","{nick}的初始卡不可删除×"},
 	{"strPcNoteTooLong","备注长度不能超过255×"},
 	{"strPcTextTooLong","文本长度不能超过48×"},
-	{"strSensNote","发现指令中带敏感词，{self}已记录并上报！"},
-	{"strSensWarn","发现指令中带敏感词，{self}拒绝响应且已上报！"},
+	{"strCensorCaution","提醒：{nick}的指令包含敏感词，{self}已上报"},
+	{"strCensorWarning","警告：{nick}的指令包含敏感词，{self}已记录并上报！"},
+	{"strCensorDanger","警告：{nick}的指令包含敏感词，{self}拒绝指令并已上报！"},
+	//{"strCensorCritical","警告：{nick}的指令包含敏感词，{self}已记录并上报！"},
 	{"strSpamFirstWarning","你短时间内对{self}指令次数过多！请善用多轮掷骰和复数生成指令（刷屏初次警告）"},
 	{"strSpamFinalWarning","请暂停你的一切指令，避免因高频指令被{self}拉黑！（刷屏最终警告）"},
 	{"strReplySet","{self}对关键词{key}的回复已设置√"},
@@ -147,10 +159,13 @@ std::map<std::string, std::string> GlobalMsg
 	{"strDefaultCOCClr","默认检定房规已清除√"},
 	{"strDefaultCOCNotFound","默认检定房规不存在×"},
 	{"strDefaultCOCSet","默认检定房规已设置:"},
-	{"strLinkLoss","{self}的时空连接已断开√"},
-	{"strLinked","{self}已创建时空门√"},
-	{"strLinkWarning","尝试创建时空门，但不保证能否连通"},
-	{"strLinkNotFound","时空门要通向不可名状的地方了×"},
+	{"strLinked","{self}已为对象建立链接√"},
+	{"strLinkClose","{self}已断开与对象的链接√" },
+	{"strLinkBusy","{nick}的目标已经有对象啦×\n{self}不支持多边关系" },
+	{"strLinkedAlready","{self}正在被其他对象链接×\n请{nick}先断绝当前关系" },
+	{"strLinkingAlready","{self}已经开启链接啦!" },
+	{"strLinkCloseAlready","{self}断开链接失败：{nick}当前本就没有对象！" },
+	{"strLinkNotFound","{self}找不到{nick}的对象×"},
 	{"strNotMaster","你不是{self}的master！你想做什么？"},
 	{"strNotAdmin","你不是{self}的管理员×"},
 	{"strAdminDismiss","{strDismiss}"},					//管理员指令退群的回执
@@ -158,7 +173,8 @@ std::map<std::string, std::string> GlobalMsg
 	{"strHlpSet","已为{key}设置词条√"},
 	{"strHlpReset","已清除{key}的词条√"},
 	{"strHlpNameEmpty","Master想要自定义什么词条呀？"},
-	{"strHlpNotFound","{self}未找到指定的帮助信息×"},
+	{"strHelpNotFound","{self}未找到【{help_word}】相关的词条×"},
+	{"strHelpSuggestion","{self}猜{nick}想要查找的是:{res}"},
 	{"strClockToWork","{self}已按时启用√"},
 	{"strClockOffWork","{self}已按时关闭√"},
 	{"strNameGenerator","{pc}的随机名称：{res}"},
@@ -240,7 +256,6 @@ std::map<std::string, std::string> GlobalMsg
 	{"strZeroDiceErr", "咦?我的骰子呢?"},
 	{"strRollTimeExceeded", "掷骰轮数超过了最大轮数限制!"},
 	{"strRollTimeErr", "异常的掷骰轮数"},
-	{"strObPrivate", "你想看什么呀？"},
 	{"strDismissPrivate", "滚！"},
 	{"strWelcomePrivate", "你在这欢迎谁呢？"},
 	{"strWelcomeMsgClearNotice", "已清除本群的入群欢迎词√"},
@@ -274,10 +289,12 @@ std::map<std::string, std::string> GlobalMsg
 	{"strPreserve", "{self}私有私用，勿扰勿怪\n如需申请许可请发送!authorize +[群号] [申请理由]"},
 	{"strJrrp", "{nick}今天的人品值是: {res}"},
 	{"strJrrpErr", "JRRP获取失败! 错误信息: \n{res}"},
+	{ "strFriendDenyNotUser", "很遗憾，你没有使用{self}的记录" },
+	{ "strFriendDenyNoTrust", "很遗憾，你不是{self}信任的用户" },
 	{"strAddFriendWhiteQQ", "{strAddFriend}"}, //白名单用户添加好友时回复此句
 	{
 		"strAddFriend",
-		R"(欢迎使用{strSelfName}！
+		R"(欢迎选择{strSelfName}的免费掷骰服务！
 .help协议 确认服务协议
 .help指令 查看指令列表
 .help设定 确认骰娘设定
@@ -286,7 +303,7 @@ std::map<std::string, std::string> GlobalMsg
 	}, //同意添加好友时额外发送的语句
 	{
 		"strAddGroup",
-		R"(欢迎使用{strSelfName}！
+		R"(欢迎选择{strSelfName}的免费掷骰服务！
 请使用.dismiss QQ号（或后四位） 使{self}退群退讨论组
 .bot on/off QQ号（或后四位） //开启或关闭指令
 .group +/-禁用回复 //禁用或启用回复
@@ -317,8 +334,15 @@ std::map<std::string, std::string> GlobalMsg
 std::map<std::string, std::string> EditedMsg;
 const std::map<std::string, std::string, less_ci> HelpDoc = {
 {"更新",R"(
+567:敏感词检测
+566:.help查询建议
+565:.log日志记录
 564:多功能优化，牌数牌堆等
+563:优化指令帮助
+562:新增GUI
+561:群/好友列表内部缓存
 560:支持Mirai加载, 基础GUI
+559:远程更新插件/不良记录
 558:新增每日统计
 557:定时作业系统
 556:黑名单系统重做
@@ -333,44 +357,62 @@ const std::map<std::string, std::string, less_ci> HelpDoc = {
 537:更新.send功能)"},
 {"协议","0.本协议是Dice!默认服务协议。如果你看到了这句话，意味着Master应用默认协议，请注意。\n1.邀请骰娘、使用掷骰服务和在群内阅读此协议视为同意并承诺遵守此协议，否则请使用.dismiss移出骰娘。\n2.不允许禁言、移出骰娘或刷屏掷骰等对骰娘的不友善行为，这些行为将会提高骰娘被制裁的风险。开关骰娘响应请使用.bot on/off。\n3.骰娘默认邀请行为已事先得到群内同意，因而会自动同意群邀请。因擅自邀请而使骰娘遭遇不友善行为时，邀请者因未履行预见义务而将承担连带责任。\n4.禁止将骰娘用于赌博及其他违法犯罪行为。\n5.对于设置敏感昵称等无法预见但有可能招致言论审查的行为，骰娘可能会出于自我保护而拒绝提供服务\n6.由于技术以及资金原因，我们无法保证机器人100%的时间稳定运行，可能不定时停机维护或遭遇冻结，但是相应情况会及时通过各种渠道进行通知，敬请谅解。临时停机的骰娘不会有任何响应，故而不会影响群内活动，此状态下仍然禁止不友善行为。\n7.对于违反协议的行为，骰娘将视情况终止对用户和所在群提供服务，并将不良记录共享给其他服务提供方。黑名单相关事宜可以与服务提供方协商，但最终裁定权在服务提供方。\n8.本协议内容随时有可能改动。请注意帮助信息、签名、空间、官方群等处的骰娘动态。\n9.骰娘提供掷骰服务是完全免费的，欢迎投食。\n10.本服务最终解释权归服务提供方所有。"},
 {"链接","Dice!论坛导航贴: https://kokona.tech \n Dice!论坛: https://forum.kokona.tech"},
-{"设定","Master：{master_QQ}\n.me使用：禁止\n.jrrp使用：允许\n邀请处理：黑名单制，非禁即入\n讨论组使用：允许\n移出反制：拉黑群和操作者\n禁言反制：默认拉黑群和群主\n刷屏反制：警告\n邀请人责任：有限连带\n窥屏可能：有\n其他插件：无\n骰娘个人群:（未设置）\n官方(水)群: 624807593 941980833 882747577\n私骰分流群：863062599\n开发交流群：1029435374"},
+{"设定","Master：{master_QQ}\n好友申请：需要使用记录\n入群邀请：黑名单制，非黑即入\n讨论组使用：允许\n移出反制：拉黑群和操作者\n禁言反制：默认拉黑群和群主\n刷屏反制：警告\n邀请人责任：有限连带\n窥屏可能：{窥屏可能}\n其他插件：{其他插件}\n骰娘用户群:{骰娘用户群}\n官方(水)群: 882747577\n私骰分享群：863062599 192499947\n开发交流群：1029435374"},
+{"骰娘用户群","【未设置】"},
+{"窥屏可能","无"},
+{"其他插件","【未设置】"},
 {"作者","Copyright (C) 2018-2020 w4123溯洄\nCopyright (C) 2019-2020 String.Empty"},
 {"指令",R"(at骰娘后接指令可以指定骰娘单独响应，如at骰娘.bot off
-多数指令需要后接参数，请.help对应指令 获取详细信息
-掷骰指令包括:
+多数指令需要后接参数，请.help对应指令 获取详细信息，如.help jrrp
+控制指令:
 .dismiss 退群
+.bot 版本信息
+.bot on 启用指令
+.bot off 停用指令
+.group 群管
 .authorize 授权许可
-.bot 开关
-.welcome 入群欢迎
+.send 向后台发送消息)"
+"\f"
+R"([第二页]跑团指令
 .rules 规则速查
 .r 掷骰
+.log 日志记录
 .ob 旁观模式
 .set 设置默认骰
-.name 随机姓名
-.nn 设置昵称
 .coc COC人物作成
 .dnd DND人物作成
 .st 属性记录
-.pc 角色卡
+.pc 角色卡记录
 .rc 检定
 .setcoc 设置检定房规
 .sc 理智检定
 .en 成长检定
 .ri 先攻
 .init 先攻列表
-.ww 骰池
-.me 第三人称动作
-.jrrp 今日人品
-.send 向管理发送消息
-.group 群管
+.ww 骰池)"
+"\f"
+R"([第三页]其他指令
+.nn 设置昵称
 .draw 抽牌
+.name 随机姓名
+.jrrp 今日人品
+.welcome 入群欢迎
+.me 第三人称动作
 为了避免未预料到的指令误判，请尽可能在参数之间使用空格)"},
+{"master",R"(当前Master:{master_QQ}
+Master拥有最高权限，且可以调整任意信任)"},
+{"log",R"(跑团日志记录
+.log new 新建日志并开始记录
+.log on 开始记录
+.log off 暂停记录
+.log end 完成记录并发送日志文件
+日志上传存在失败可能，届时请联系后台管理索取)"},
 {"deck","该指令可以设置默认牌堆，使用.draw不指定牌堆名时将使用此牌堆。该牌堆不会放回直到抽完最后一张后洗牌。\n.deck set 公共牌堆名 设置默认牌堆\n.deck set 正整数1-100 设置指定长度的数列\n.deck show 查看剩余卡牌\n.deck reset 重置剩余卡牌\n.deck new 自定义牌堆（用空格或|分割）（白名单限定）\n.deck new 有弹|无弹|无弹|无弹|无弹|无弹\n除show外其他群内操作需要管理权限"},
 {"退群","&dismiss"},
 {"退群指令","&dismiss"},
 {"dismiss","该指令需要群管理员权限，使用后即退出群聊\n!dismiss [目标QQ(完整或末四位)]指名退群\n!dismiss无视内置黑名单和静默状态，只要插件开启总是有效"},
 {"授权许可","&authoize"},
-{"authorize","授权许可(非信任用户使用时转为向管理申请许可)\n!authorize (+[群号]) ([申请理由])\n群内原地发送可省略群号，无法自动授权时会连同理由发给管理"},
+{"authorize","授权许可(非信任用户使用时转为向管理申请许可)\n!authorize (+[群号]) ([申请理由])\n群内原地发送可省略群号，无法自动授权时会连同理由发给管理\n默认格式为:!authorize 申请用途:[ **请写入理由** ] 我已了解Dice!基本用法，仔细阅读并保证遵守{strSelfName}的用户协议，如需停用指令使用[ **请写入指令** ]，用后使用[ **请写入指令** ]送出群"},
 {"开关","&bot"},
 {"bot",".bot on/off开启/静默骰子（限群管理）\n.bot无视静默状态，只要插件开启且不在黑名单总是有效"},
 {"规则速查","&rules"},
@@ -427,8 +469,14 @@ const std::map<std::string, std::string, less_ci> HelpDoc = {
 		"检定指令：.rc/ra [属性名]([成功率])\n角色卡设置了属性时，可省略成功率\n.rc体质*5\t//允许使用+-*/，但顺序要求为乘法>加减>除法\n.rc 困难幸运\t//技能名开头的困难和极难会被视为关键词\n.rc 敏捷-10\t//修正后成功率必须在1-1000内\n.rcp 手枪\t//奖惩骰至多9个\n默认以规则书判定，大成功大失败的房规由.setcoc设置"
 	},
 	{
+		"房规",
+		"Dice!目前只为COC7检定提供房规，指令为.setcoc:{setcoc}"
+	},
+	{
 		"setcoc",
 		"为当前群或讨论组设置COC房规，如.setcoc 1,当前参数0-5\n0 规则书\n出1大成功\n不满50出96 - 100大失败，满50出100大失败\n1\n不满50出1大成功，满50出1 - 5大成功\n不满50出96 - 100大失败，满50出100大失败\n2\n出1 - 5且 <= 成功率大成功\n出100或出96 - 99且 > 成功率大失败\n3\n出1 - 5大成功\n出96 - 100大失败\n4\n出1 - 5且 <= 十分之一大成功\n不满50出 >= 96 + 十分之一大失败，满50出100大失败\n5\n出1 - 2且 < 五分之一大成功\n不满50出96 - 100大失败，满50出99 - 100大失败\n"
+		R"(如果其他房规可向开发者反馈
+无论如何，群内检定只会调用群内设置，否则后果将是团内成员不对等)"
 	},
 	{"san check", "&sc"},
 	{"理智检定", "&sc"},
@@ -451,8 +499,9 @@ const std::map<std::string, std::string, less_ci> HelpDoc = {
 		"draw",
 		"抽牌：.draw [牌堆名称] ([抽牌数量])\t//抽到的牌不放回，抽牌数量不能超过牌堆数量\n当前内置牌堆：硬币/性别/\n调查员职业/调查员背景/英雄天赋/煤气灯/个人描述/思想信念/重要之人/重要之人理由/意义非凡之地/宝贵之物/调查员特点/即时症状/总结症状/恐惧症状/狂躁症状/\n阵营/哈罗花色/冒险点子/\n人偶暗示/人偶宝物/人偶记忆碎片/人偶依恋/\nAMGC/AMGC身材/AMGC专精/AMGC武器/AMGC套装/AMGC才能/AMGC特技1/AMGC特技2/AMGC特技3\n/塔罗牌/正逆/塔罗牌占卜/单张塔罗牌/圣三角牌阵/四要素牌阵/小十字牌阵/六芒星牌阵/凯尔特十字牌阵\n.help审判正位（牌+方向）可获取塔罗牌解读\n扩展牌堆:{扩展牌堆}"
 	},
+	{ "扩展牌堆","{list_extern_deck}" },
+	{ "全牌堆列表","{list_all_deck}" },
 	{"先攻", "&ri"},
-	{"扩展牌堆", ""},
 	{"ri", "先攻（群聊限定）：.ri([加值])([昵称])\n.ri -1 某pc\t//自动记入先攻列表\n.ri +5 boss"},
 	{"先攻列表", "&init"},
 	{"init", "先攻列表：\n.init\t//查看先攻列表\n.init clr\t//清除先攻列表"},
@@ -489,8 +538,18 @@ const std::map<std::string, std::string, less_ci> HelpDoc = {
 例:.group +禁用回复 //关闭本群自定义回复
 群管词条:停用指令/禁用回复/禁用jrrp/禁用draw/禁用me/禁用help/禁用ob/拦截消息/许可使用/免清/免黑)"
 	},
+	{"消息链接","&link"},
+	{"link",R"(消息链接.link
+.link [转发方向] [对象窗口] 建立本窗口与对象窗口的转发
+.link close 关闭链接
+.link start 开启上次关闭的链接
+[转发方向]:to=转发本窗口消息到对象窗口;from=转发对象窗口消息到本窗口;with=双向转发
+[对象窗口]:群/讨论组=[群号];私聊窗口=q[QQ号]
+例:.link with q1605271653 //建立双向私聊链接
+.link from 754494359 //接收目标群的消息转发)"},
 	{"溯洄", "孕育万千骰娘生机之母，萌妹吃鱼之神，正五棱双角锥体对的监护人，一切诡秘的窥见者，拟人者主宰，时空舞台外的逆流者，永转的命运之轮"},
-	{"投食", "投食Shiki，请选择http://shiki.stringempty.xyz/alipay.png\n投食溯洄，可选择https://afdian.net/@suhuiw4123"},
+	{"投喂","&投食"},
+	{"投食", "投食Shiki，请选择https://afdian.net/@dice_shiki\n投食溯洄，可选择https://afdian.net/@suhuiw4123\n投食{self}，可选择……充超会？"},
 	{"愚者正位", "憧憬自然的地方、毫无目的地前行、喜欢尝试挑战新鲜事物、四处流浪。美好的梦想。"},
 	{
 		"愚者逆位",
@@ -540,7 +599,7 @@ const std::map<std::string, std::string, less_ci> HelpDoc = {
 	{"世界逆位", "未完成、失败、准备不足、盲目接受、一时不顺利、半途而废、精神颓废、饱和状态、合谋、态度不够融洽、感情受挫。"},
 };
 
-std::string getMsg(const std::string& key, const std::map<std::string, std::string>& maptmp)
+std::string getMsg(const std::string& key, const std::unordered_map<std::string, std::string>& maptmp)
 {
 	const auto it = GlobalMsg.find(key);
 	if (it != GlobalMsg.end())return format(it->second, GlobalMsg, maptmp);

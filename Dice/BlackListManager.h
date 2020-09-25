@@ -89,7 +89,7 @@ class DDBlackManager
 	//发现所指相同的记录
 	int find(const DDBlackMark&);
 	//更新记录
-	void insert(DDBlackMark&);
+	bool insert(DDBlackMark&);
 	bool update(DDBlackMark&, unsigned int, int);
 	void reset_group_danger(long long);
 	void reset_qq_danger(long long);
@@ -116,7 +116,7 @@ public:
 	void verify(void*, long long);
 	void create(DDBlackMark&);
 	//读取json格式黑名单记录
-	int loadJson(string strPath);
+	int loadJson(string strPath, bool isExtern = false);
 	//读取旧版本黑名单列表
 	int loadHistory(const string& strLoc);
 	void saveJson(const string& strPath) const;

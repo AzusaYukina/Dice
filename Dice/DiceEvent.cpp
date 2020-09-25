@@ -2,6 +2,7 @@
 #include "DiceEvent.h"
 #include "Jsonio.h"
 #include "MsgFormat.h"
+#include "DiceCensor.h"
 #include "DiceMod.h"
 #include "ManagerSystem.h"
 #include "BlackListManager.h"
@@ -15,18 +16,65 @@
 using namespace std;
 using namespace CQ;
 
-void FromMsg::FwdMsg(const string& message)
+
+void FromMsg::reply(std::string strReply, bool isFormat) {
+	isAns = true;
+	if (isFormat)
+		strReply = format(strReply, GlobalMsg, strVar);
+	AddMsgToQueue(strReply, fromChat);
+	if (LogList.count(fromSession)) {
+		filter_CQcode(strReply, fromGroup);
+		ofstream logout(gm->session(fromSession).log_path(), ios::out | ios::app);
+		logout << GBKtoUTF8(getMsg("strSelfName")) + "(" + to_string(console.DiceMaid) + ") " + printTTime(fromTime) << endl
+			<< GBKtoUTF8(strReply) << endl << endl;
+	}
+}
+
+void FromMsg::reply(std::string strReply, const std::initializer_list<const std::string> replace_str,
+		   bool isFormat) {
+	isAns = true;
+	while (isspace(static_cast<unsigned char>(strReply[0])))
+		strReply.erase(strReply.begin());
+	if (isFormat) {
+		int index = 0;
+		for (const auto& s : replace_str) {
+			strVar[to_string(index++)] = s;
+		}
+		strReply = format(strReply, GlobalMsg, strVar);
+	}
+	AddMsgToQueue(strReply, fromChat);
+	if (LogList.count(fromSession)&& gm->session(fromSession).is_logging()) {
+		filter_CQcode(strReply, fromGroup);
+		ofstream logout(gm->session(fromSession).log_path(), ios::out | ios::app);
+		logout << GBKtoUTF8(getMsg("strSelfName")) + "(" + to_string(console.DiceMaid) + ") " + printTTime(fromTime) << endl
+			<< GBKtoUTF8(strReply) << endl << endl;
+	}
+}
+
+void FromMsg::reply() {
+	reply(strReply);
+}
+
+void FromMsg::fwdMsg()
 {
-	if (mFwdList.count(fromChat) && !isLinkOrder)
+	if (LinkList.count(fromSession) && LinkList[fromSession].second && strLowerMessage.find(".link") != 0)
 	{
-		const auto range = mFwdList.equal_range(fromChat);
 		string strFwd;
 		if (trusted < 5)strFwd += printFrom();
-		strFwd += message;
-		for (auto it = range.first; it != range.second; ++it)
-		{
-			AddMsgToQueue(strFwd, it->second.first, it->second.second);
+		strFwd += strMsg;
+		if (long long aim = LinkList[fromSession].first;aim < 0) {
+			AddMsgToQueue(strFwd, ~aim);
 		}
+		else if (ChatList.count(aim)) {
+			AddMsgToQueue(strFwd, aim, chat(aim).isGroup ? msgtype::Group : msgtype::Discuss);
+		}
+	}
+	if (LogList.count(fromSession) && strLowerMessage.find(".log") != 0) {
+		string msg = strMsg;
+		filter_CQcode(msg, fromGroup);
+		ofstream logout(gm->session(fromSession).log_path(), ios::out | ios::app);
+		logout << GBKtoUTF8(printQQ(fromQQ)) + " " + printTTime(fromTime) << endl
+			<< GBKtoUTF8(msg) << endl << endl;
 	}
 }
 
@@ -59,7 +107,8 @@ int FromMsg::AdminEvent(const string& strOption)
 			<< "今日用户量：" + to_string(today->cnt())
 			<< (!PList.empty() ? "角色卡记录数：" + to_string(PList.size()) : "")
 			<< "黑名单用户数：" + to_string(blacklist->mQQDanger.size())
-			<< "黑名单群数：" + to_string(blacklist->mGroupDanger.size());
+			<< "黑名单群数：" + to_string(blacklist->mGroupDanger.size())
+			<< (censor.size() ? "敏感词库规模：" + to_string(censor.size()) : "");
 		reply(GlobalMsg["strSelfName"] + "的当前情况" + res.show());
 		return 1;
 	}
@@ -496,12 +545,11 @@ int FromMsg::AdminEvent(const string& strOption)
 		{
 			if (llTargetID == 0)
 			{
-				strReply = "当前黑名单群列表：";
-				for (auto [each, danger] : blacklist->mGroupDanger)
-				{
-					strReply += "\n" + to_string(each);
+				ResList res;
+				for (auto [each, danger] : blacklist->mGroupDanger) {
+					res << printGroup(each) + ":" + to_string(danger);
 				}
-				reply();
+				reply(res.show(), false);
 				return 1;
 			}
 			strVar["time"] = printSTNow();
@@ -574,12 +622,12 @@ int FromMsg::AdminEvent(const string& strOption)
 		{
 			if (llTargetID == 0) 
 			{
-				strReply = "当前黑名单用户列表：";
+				ResList res;
 				for (auto [each, danger] : blacklist->mQQDanger) 
 				{
-					strReply += "\n" + printQQ(each);
+					res << printQQ(each) + ":" + to_string(danger);
 				}
-				reply();
+				reply(res.show(), false);
 				return 1;
 			}
 			strVar["time"] = printSTNow();
@@ -612,8 +660,9 @@ int FromMsg::MasterSet()
 	}
 	if (strOption == "groupclr")
 	{
-		const std::string strPara = readRest();
-		clearGroup(strPara, fromQQ);
+		strVar["clear_mode"] = readRest();
+		cmd_key = "clrgroup";
+		sch.push_job(*this);
 		return 1;
 	}
 	if (strOption == "delete")
@@ -706,12 +755,9 @@ int FromMsg::DiceReply()
 	while (isspace(static_cast<unsigned char>(strMsg[intMsgCnt])))
 		intMsgCnt++;
 	strVar["nick"] = getName(fromQQ, fromGroup);
-	strVar["pc"] = getPCName(fromQQ, fromGroup);
+	getPCName(*this);
 	strVar["at"] = intT ? "[CQ:at,qq=" + to_string(fromQQ) + "]" : strVar["nick"];
-	isAuth = trusted > 3 || intT != GroupT || getGroupMemberInfo(fromGroup, fromQQ).permissions > 1;
-	strLowerMessage = strMsg;
-	std::transform(strLowerMessage.begin(), strLowerMessage.end(), strLowerMessage.begin(),
-	               [](unsigned char c) { return tolower(c); });
+	isAuth = trusted > 3 || intT != GroupT || getGroupMemberInfo(fromGroup, fromQQ).permissions != 1 || pGrp->inviter == fromQQ;
 	//指令匹配
 	if (strLowerMessage.substr(intMsgCnt, 9) == "authorize")
 	{
@@ -730,7 +776,7 @@ int FromMsg::DiceReply()
 				return 1;
 			}
 		}
-		if (pGrp->isset("许可使用") && !pGrp->isset("未审核"))return 0;
+		if (pGrp->isset("许可使用") && !pGrp->isset("未审核") && !pGrp->isset("协议无效"))return 0;
 		if (trusted > 0)
 		{
 			pGrp->set("许可使用").reset("未审核").reset("协议无效");
@@ -773,7 +819,7 @@ int FromMsg::DiceReply()
 				grp.leave(getMsg("strAdminDismiss", strVar));
 				reply(GlobalMsg["strGroupExit"]);
 			}
-			else if(getGroupMemberInfo(llGroup, fromQQ).permissions > 1)
+			else if(getGroupMemberInfo(llGroup, fromQQ).permissions > 1 || (grp.inviter == fromQQ))
 			{
 				reply(GlobalMsg["strDismiss"]);
 			}
@@ -940,7 +986,7 @@ int FromMsg::DiceReply()
 		}
 		return 1;
 	}
-	if (isBotOff)
+	if (isDisabled || (!isCalled || !console["DisabledListenAt"]) && (groupset(fromGroup, "停用指令") > 0))
 	{
 		if (intT == PrivateT)
 		{
@@ -949,15 +995,39 @@ int FromMsg::DiceReply()
 		}
 		return 0;
 	}
-	/*switch(console.DSens.find(strLowerMessage, fromQQ, fromChat)) {
-	case 0:break;
-	case 1:
-		reply(GlobalMsg["strSensNote"]);
-		break;
-	case 2:
-		reply(GlobalMsg["strSensWarn"]);
-		return 1;
-	}*/
+	//信任小于4的用户进行敏感词检测
+	if (trusted < 4) {
+		unordered_set<string>sens_words;
+		switch (int danger = censor.search(strMsg, sens_words) - 1) {
+		case 3:
+			if (trusted < danger++) {
+				console.log("警告:" + printQQ(fromQQ) + "对" + GlobalMsg["strSelfName"] + "发送了含敏感词指令:\n" + strMsg, 0b1000,
+							printTTime(fromTime));
+				reply(GlobalMsg["strCensorDanger"]);
+				return 1;
+			}
+		case 2:
+			if (trusted < danger++) {
+				console.log("警告:" + printQQ(fromQQ) + "对" + GlobalMsg["strSelfName"] + "发送了含敏感词指令:\n" + strMsg, 0b10,
+							printTTime(fromTime));
+				reply(GlobalMsg["strCensorWarning"]);
+				break;
+			}
+		case 1:
+			if (trusted < danger++) {
+				console.log("提醒:" + printQQ(fromQQ) + "对" + GlobalMsg["strSelfName"] + "发送了含敏感词指令:\n" + strMsg, 0b10,
+							printTTime(fromTime));
+				reply(GlobalMsg["strCensorCaution"]);
+				break;
+			}
+		case 0:
+			console.log("提醒:" + printQQ(fromQQ) + "对" + GlobalMsg["strSelfName"] + "发送了含敏感词指令:\n" + strMsg, 1,
+						printTTime(fromTime));
+			break;
+		default:
+			break;
+		}
+	}
 	if (strLowerMessage.substr(intMsgCnt, 7) == "helpdoc" && trusted > 3)
 	{
 		intMsgCnt += 7;
@@ -995,16 +1065,16 @@ int FromMsg::DiceReply()
 		intMsgCnt += 4;
 		while (strLowerMessage[intMsgCnt] == ' ')
 			intMsgCnt++;
-		const string strOption = readRest();
+		strVar["help_word"] = readRest();
 		if (intT)
 		{
-			if (!isAuth && (strOption == "on" || strOption == "off"))
+			if (!isAuth && (strVar["help_word"] == "on" || strVar["help_word"] == "off"))
 			{
 				reply(GlobalMsg["strPermissionDeniedErr"]);
 				return 1;
 			}
 			strVar["option"] = "禁用help";
-			if (strOption == "off")
+			if (strVar["help_word"] == "off")
 			{
 				if (groupset(fromGroup, strVar["option"]) < 1)
 				{
@@ -1017,7 +1087,7 @@ int FromMsg::DiceReply()
 				}
 				return 1;
 			}
-			if (strOption == "on")
+			if (strVar["help_word"] == "on")
 			{
 				if (groupset(fromGroup, strVar["option"]) > 0)
 				{
@@ -1036,14 +1106,11 @@ int FromMsg::DiceReply()
 				return 1;
 			}
 		}
-		if (strOption.empty())
-		{
-			reply(string(Dice_Short_Ver) + "\n" + GlobalMsg["strHlpMsg"]);
+		if (frame == QQFrame::Mirai) {
+			std::thread th(&DiceModManager::_help, fmt.get(), this);
+			th.detach();
 		}
-		else
-		{
-			reply(fmt->get_help(strOption));
-		}
+		else fmt->_help(this);
 		return true;
 	}
 	else if (intT == GroupT && ((console["CheckGroupLicense"] && pGrp->isset("未审核")) || (console["CheckGroupLicense"] == 2 && 
@@ -1092,7 +1159,20 @@ int FromMsg::DiceReply()
 		}
 		return 1;
 	}
-	if (strLowerMessage.substr(intMsgCnt, 6) == "setcoc")
+	else if (strLowerMessage.substr(intMsgCnt, 6) == "groups") {
+		if (trusted < 4) {
+			reply(GlobalMsg["strNotAdmin"]);
+			return 1;
+		}
+		intMsgCnt += 6;
+		string strOption = readPara();
+		if (strOption == "list") {
+			strVar["list_mode"] = readPara();
+			cmd_key = "lsgroup";
+			sch.push_job(*this);
+		}
+	}
+	else if (strLowerMessage.substr(intMsgCnt, 6) == "setcoc")
 	{
 		if (!isAuth)
 		{
@@ -1141,7 +1221,7 @@ int FromMsg::DiceReply()
 		else getUser(fromQQ).setConf("rc房规", intRule);
 		return 1;
 	}
-	if (strLowerMessage.substr(intMsgCnt, 6) == "system")
+	else if (strLowerMessage.substr(intMsgCnt, 6) == "system")
 	{
 		intMsgCnt += 6;
 		if (trusted < 4)
@@ -1180,9 +1260,9 @@ int FromMsg::DiceReply()
 		}
 		if (strOption == "clrimg")
 		{
-			if (Mirai)
+			if (frame != QQFrame::CoolQ)
 			{
-				reply("Mirai不支持此功能");
+				reply("非酷Q框架不需要此功能");
 				return -1;
 			}
 			if (trusted < 5)
@@ -1196,17 +1276,21 @@ int FromMsg::DiceReply()
 		}
 		else if (strOption == "reload")
 		{
-			if (Mirai)
-			{
-				reply("Mirai不支持此功能");
-				return -1;
-			}
 			if (trusted < 5 && fromQQ != console.master()) 
 			{
 				reply(GlobalMsg["strNotMaster"]);
 				return -1;
 			}
-			cmd_key = "reload";
+			cmd_key = (frame == QQFrame::CoolQ) ? "remake" : "reload";
+			sch.push_job(*this);
+			return 1;
+		}
+		else if (strOption == "remake") {
+			if (trusted < 5 && fromQQ != console.master()) {
+				reply(GlobalMsg["strNotMaster"]);
+				return -1;
+			}
+			cmd_key = "remake";
 			sch.push_job(*this);
 			return 1;
 		}
@@ -1223,13 +1307,14 @@ int FromMsg::DiceReply()
 		}
 		if (strOption == "rexplorer")
 		{
-			if (trusted < 5)
+			if (trusted < 5 && fromQQ != console.master())
 			{
 				reply(GlobalMsg["strNotMaster"]);
 				return -1;
 			}
 			system(R"(taskkill /f /fi "username eq %username%" /im explorer.exe)");
 			system(R"(start %SystemRoot%\explorer.exe)");
+			this_thread::sleep_for(3s);
 			note("已重启资源管理器√\n当前内存占用：" + to_string(getRamPort()) + "%");
 		}
 		else if (strOption == "cmd")
@@ -1272,6 +1357,11 @@ int FromMsg::DiceReply()
 			}
 			return 1;
 		}
+		else if (strOpt == "black") {
+			cmd_key = "cloudblack";
+			sch.push_job(*this);
+			return 1;
+		}
 	}
 	else if (strLowerMessage.substr(intMsgCnt, 5) == "coc7d" || strLowerMessage.substr(intMsgCnt, 4) == "cocd")
 	{
@@ -1292,6 +1382,10 @@ int FromMsg::DiceReply()
 		intMsgCnt += 5;
 		long long llGroup(fromGroup);
 		readSkipSpace();
+		if (strMsg.length() == intMsgCnt) {
+			reply(fmt->get_help("group"));
+			return 1;
+		}
 		if (strLowerMessage.substr(intMsgCnt, 3) == "all")
 		{
 			if (trusted < 5)
@@ -1695,12 +1789,12 @@ int FromMsg::DiceReply()
 			return -1;
 		}
 		strVar["key"] = readUntilSpace();
-		vector<string>* Deck = nullptr;
 		if (strVar["key"].empty())
 		{
 			reply(GlobalMsg["strParaEmpty"]);
 			return -1;
 		}
+		vector<string>* Deck = nullptr;
 		CardDeck::mReplyDeck[strVar["key"]] = {};
 		Deck = &CardDeck::mReplyDeck[strVar["key"]];
 		while (intMsgCnt != strMsg.length())
@@ -1722,6 +1816,10 @@ int FromMsg::DiceReply()
 		intMsgCnt += 5;
 		while (isspace(static_cast<unsigned char>(strMsg[intMsgCnt])))
 			intMsgCnt++;
+		if (strMsg.length() == intMsgCnt) {
+			reply(fmt->get_help("rules"));
+			return 1;
+		}
 		if (strLowerMessage.substr(intMsgCnt, 3) == "set")
 		{
 			intMsgCnt += 3;
@@ -1806,6 +1904,10 @@ int FromMsg::DiceReply()
 		}
 		intMsgCnt += 4;
 		readSkipSpace();
+		if (strMsg.length() == intMsgCnt) {
+			reply(fmt->get_help("deck"));
+			return 1;
+		}
 		string strPara = readPara();
 		vector<string> *DeckPro = nullptr, *DeckTmp = nullptr;
 		if (intT != PrivateT && CardDeck::mGroupDeck.count(fromGroup))
@@ -2061,15 +2163,15 @@ int FromMsg::DiceReply()
 		while (isspace(static_cast<unsigned char>(strLowerMessage[intMsgCnt])))intMsgCnt++;
 		if (strLowerMessage.substr(intMsgCnt, 3) == "clr")
 		{
-			if (gm->session(fromGroup).table_clr("先攻"))
+			if (gm->session(fromSession).table_clr("先攻"))
 				reply("成功清除先攻记录！");
 			else
 				reply("列表为空！");
 			return 1;
 		}
 		strVar["table_name"] = "先攻";
-		if (gm->session(fromGroup).table_count("先攻"))
-			reply(GlobalMsg["strGMTableShow"] + gm->session(fromGroup).table_prior_show("先攻"));
+		if (gm->session(fromSession).table_count("先攻"))
+			reply(GlobalMsg["strGMTableShow"] + gm->session(fromSession).table_prior_show("先攻"));
 		else reply(GlobalMsg["strGMTableNotExist"]);
 		return 1;
 	}
@@ -2189,92 +2291,19 @@ int FromMsg::DiceReply()
 			reply(GlobalMsg["strNotAdmin"]);
 			return true;
 		}
-		isLinkOrder = true;
-		string strOption = readPara();
-		if (strOption == "close")
-		{
-			if (mLinkedList.count(fromChat))
-			{
-				chatType ToChat = mLinkedList[fromChat];
-				mLinkedList.erase(fromChat);
-				auto Range = mFwdList.equal_range(fromChat);
-				for (auto it = Range.first; it != Range.second;)
-				{
-					if (it->second == ToChat)
-					{
-						it = mFwdList.erase(it);
-					}
-					else
-					{
-						++it;
-					}
-				}
-				Range = mFwdList.equal_range(ToChat);
-				for (auto it = Range.first; it != Range.second;)
-				{
-					if (it->second == fromChat)
-					{
-						it = mFwdList.erase(it);
-					}
-					else
-					{
-						++it;
-					}
-				}
-				reply(GlobalMsg["strLinkLoss"]);
-				return 1;
-			}
-			return 1;
+		strVar["option"] = readPara();
+		if (strVar["option"] == "close") {
+			gm->session(fromSession).link_close(this);
 		}
-		string strType = readPara();
-		chatType ToChat;
-		string strID = readDigit();
-		if (strID.empty())
-		{
-			reply(GlobalMsg["strLinkNotFound"]);
-			return 1;
+		else if (strVar["option"] == "start") {
+			gm->session(fromSession).link_start(this);
 		}
-		ToChat.first = stoll(strID);
-		if (strType == "qq")
-		{
-			ToChat.second = msgtype::Private;
+		else if (strVar["option"] == "with" || strVar["option"] == "from" || strVar["option"] == "to") {
+			gm->session(fromSession).link_new(this);
 		}
-		else if (strType == "group")
-		{
-			ToChat.second = msgtype::Group;
+		else {
+			reply(fmt->get_help("link"));
 		}
-		else if (strType == "discuss")
-		{
-			ToChat.second = msgtype::Discuss;
-		}
-		else
-		{
-			reply(GlobalMsg["strLinkNotFound"]);
-			return 1;
-		}
-		if (mLinkedList.count(fromChat) && mFwdList.count(mLinkedList[fromChat]))
-		{
-			mFwdList.erase(mLinkedList[fromChat]);
-		}
-		if (strOption == "with")
-		{
-			mLinkedList[fromChat] = ToChat;
-			mFwdList.insert({fromChat, ToChat});
-			mFwdList.insert({ToChat, fromChat});
-		}
-		else if (strOption == "from")
-		{
-			mLinkedList[fromChat] = ToChat;
-			mFwdList.insert({ToChat, fromChat});
-		}
-		else if (strOption == "to")
-		{
-			mLinkedList[fromChat] = ToChat;
-			mFwdList.insert({fromChat, ToChat});
-		}
-		else return 1;
-		if (ChatList.count(ToChat.first) || UserList.count(ToChat.first))reply(GlobalMsg["strLinked"]);
-		else reply(GlobalMsg["strLinkWarning"]);
 		return 1;
 	}
 	else if (strLowerMessage.substr(intMsgCnt, 4) == "name")
@@ -2311,6 +2340,10 @@ int FromMsg::DiceReply()
 	{
 		intMsgCnt += 4;
 		readSkipSpace();
+		if (strMsg.length() == intMsgCnt) {
+			reply(fmt->get_help("send"));
+			return 1;
+		}
 		//先考虑Master带参数向指定目标发送
 		if (trusted > 2)
 		{
@@ -2417,6 +2450,25 @@ int FromMsg::DiceReply()
 			reply(GlobalMsg["strUserTrusted"]);
 			return 1;
 		}
+		if (strOption == "diss") {
+			if (trusted < 4 && fromQQ != console.master()) {
+				reply(GlobalMsg["strNotAdmin"]);
+				return 1;
+			}
+			long long llTargetID(readID());
+			if (!llTargetID) {
+				reply(GlobalMsg["strQQIDEmpty"]);
+			}
+			else if (trustedQQ(llTargetID) >= trusted) {
+				reply(GlobalMsg["strUserTrustDenied"]);
+			}
+			else {
+				blacklist->add_black_qq(llTargetID, this);
+				UserList.erase(llTargetID);
+				PList.erase(llTargetID);
+			}
+			return 1;
+		}
 		if (strOption == "kill")
 		{
 			if (trusted < 4 && fromQQ != console.master())
@@ -2510,6 +2562,28 @@ int FromMsg::DiceReply()
 		reply(strReply);
 		return 1;
 	}
+	else if (strLowerMessage.substr(intMsgCnt, 3) == "log") {
+	intMsgCnt += 3;
+	string strPara = readPara();
+	if (strPara.empty()) {
+		reply(fmt->get_help("log"));
+	}
+	else if (DiceSession& game = gm->session(fromSession); strPara == "new") {
+		game.log_new(this);
+	}else if(strPara == "on") {
+		game.log_on(this);
+	}
+	else if (strPara == "off") {
+		game.log_off(this);
+	}
+	else if (strPara == "end") {
+		game.log_end(this);
+	}
+	else {
+		reply(fmt->get_help("log"));
+	}
+	return 1;
+}
 	else if (strLowerMessage.substr(intMsgCnt, 3) == "nnn")
 	{
 		intMsgCnt += 3;
@@ -2590,6 +2664,10 @@ int FromMsg::DiceReply()
 		intMsgCnt += 2;
 		while (isspace(static_cast<unsigned char>(strLowerMessage[intMsgCnt])))
 			intMsgCnt++;
+		if (strMsg.length() == intMsgCnt) {
+			reply(fmt->get_help("en"));
+			return 1;
+		}
 		strVar["attr"] = readAttrName();
 		string strCurrentValue = readDigit(false);
 		short nCurrentVal;
@@ -2810,7 +2888,7 @@ int FromMsg::DiceReply()
 	{
 		if (intT == PrivateT)
 		{
-			reply(GlobalMsg["strObPrivate"]);
+			reply(fmt->get_help("ob"));
 			return 1;
 		}
 		intMsgCnt += 2;
@@ -2829,7 +2907,7 @@ int FromMsg::DiceReply()
 			if (groupset(fromGroup, strVar["option"]) < 1)
 			{
 				chat(fromGroup).set(strVar["option"]);
-				gm->session(fromGroup).clear_ob();
+				gm->session(fromSession).clear_ob();
 				reply(GlobalMsg["strObOff"]);
 			}
 			else
@@ -2858,13 +2936,13 @@ int FromMsg::DiceReply()
 		}
 		if (strOption == "list")
 		{
-			gm->session(fromGroup).ob_list(this);
+			gm->session(fromSession).ob_list(this);
 		}
 		else if (strOption == "clr")
 		{
 			if (intT == DiscussT || getGroupMemberInfo(fromGroup, fromQQ).permissions >= 2)
 			{
-				gm->session(fromGroup).ob_clr(this);
+				gm->session(fromSession).ob_clr(this);
 			}
 			else
 			{
@@ -2873,11 +2951,11 @@ int FromMsg::DiceReply()
 		}
 		else if (strOption == "exit")
 		{
-			gm->session(fromGroup).ob_exit(this);
+			gm->session(fromSession).ob_exit(this);
 		}
 		else
 		{
-			gm->session(fromGroup).ob_enter(this);
+			gm->session(fromSession).ob_enter(this);
 		}
 		return 1;
 	}
@@ -2885,6 +2963,10 @@ int FromMsg::DiceReply()
 	{
 		intMsgCnt += 2;
 		string strOption = readPara();
+		if (strOption.empty()) {
+			reply(fmt->get_help("pc"));
+			return 1;
+		}
 		Player& pl = getPlayer(fromQQ);
 		if (strOption == "tag")
 		{
@@ -3078,6 +3160,10 @@ int FromMsg::DiceReply()
 	{
 		intMsgCnt += 2;
 		readSkipSpace();
+		if (strMsg.length() == intMsgCnt) {
+			reply(fmt->get_help("rc"));
+			return 1;
+		}
 		int intRule = intT
 			              ? get(chat(fromGroup).intConf, string("rc房规"), 0)
 			              : get(getUser(fromQQ).intConf, string("rc房规"), 0);
@@ -3361,7 +3447,7 @@ int FromMsg::DiceReply()
 			reply(GlobalMsg["strUnknownErr"]);
 			return 1;
 		}
-		gm->session(fromGroup).table_add("先攻", initdice.intTotal, strname);
+		gm->session(fromSession).table_add("先攻", initdice.intTotal, strname);
 		const string strReply = strname + "的先攻骰点：" + initdice.FormCompleteString();
 		reply(strReply);
 		return 1;
@@ -3372,8 +3458,11 @@ int FromMsg::DiceReply()
 		string SanCost = readUntilSpace();
 		while (isspace(static_cast<unsigned char>(strLowerMessage[intMsgCnt])))
 			intMsgCnt++;
-		if (SanCost.empty() || SanCost.find('/') == string::npos)
-		{
+		if (SanCost.empty()) {
+			reply(fmt->get_help("sc"));
+			return 1;
+		}
+		if(SanCost.find('/') == string::npos){
 			reply(GlobalMsg["strSanCostInvalid"]);
 			return 1;
 		}
@@ -3463,7 +3552,7 @@ int FromMsg::DiceReply()
 			intMsgCnt++;
 		if (intMsgCnt == strLowerMessage.length())
 		{
-			reply(GlobalMsg["strStErr"]);
+			reply(fmt->get_help("st"));
 			return 1;
 		}
 		if (strLowerMessage.substr(intMsgCnt, 3) == "clr")
@@ -3728,7 +3817,7 @@ int FromMsg::DiceReply()
 				{
 					strTurnNotice = "在" + printChat(fromChat) + "中 " + strTurnNotice;
 					AddMsgToQueue(strTurnNotice, fromQQ, msgtype::Private);
-					for (auto qq : gm->session(fromGroup).get_ob())
+					for (auto qq : gm->session(fromSession).get_ob())
 					{
 						if (qq != fromQQ)
 						{
@@ -3840,7 +3929,7 @@ int FromMsg::DiceReply()
 				strReply = format(strReply, GlobalMsg, strVar);
 				strReply = "在" + printChat(fromChat) + "中 " + strReply;
 				AddMsgToQueue(strReply, fromQQ, msgtype::Private);
-				for (auto qq : gm->session(fromGroup).get_ob())
+				for (auto qq : gm->session(fromSession).get_ob())
 				{
 					if (qq != fromQQ)
 					{
@@ -3869,7 +3958,7 @@ int FromMsg::DiceReply()
 					strReply = format(strReply, GlobalMsg, strVar);
 					strReply = "在" + printChat(fromChat) + "中 " + strReply;
 					AddMsgToQueue(strReply, fromQQ, msgtype::Private);
-					for (auto qq : gm->session(fromGroup).get_ob())
+					for (auto qq : gm->session(fromSession).get_ob())
 					{
 						if (qq != fromQQ)
 						{
@@ -3986,7 +4075,7 @@ int FromMsg::DiceReply()
 				{
 					strReply = format("在" + printChat(fromChat) + "中 " + GlobalMsg["strRollTurn"], GlobalMsg, strVar);
 					AddMsgToQueue(strReply, fromQQ, msgtype::Private);
-					for (auto qq : gm->session(fromGroup).get_ob())
+					for (auto qq : gm->session(fromSession).get_ob())
 					{
 						if (qq != fromQQ)
 						{
@@ -4072,7 +4161,7 @@ int FromMsg::DiceReply()
 				strReply = format(strReply, GlobalMsg, strVar);
 				strReply = "在" + printChat(fromChat) + "中 " + strReply;
 				AddMsgToQueue(strReply, fromQQ, msgtype::Private);
-				for (auto qq : gm->session(fromGroup).get_ob())
+				for (auto qq : gm->session(fromSession).get_ob())
 				{
 					if (qq != fromQQ)
 					{
@@ -4113,7 +4202,7 @@ int FromMsg::DiceReply()
 				strReply = format(strReply, GlobalMsg, strVar);
 				strReply = "在" + printChat(fromChat) + "中 " + strReply;
 				AddMsgToQueue(strReply, fromQQ, msgtype::Private);
-				for (auto qq : gm->session(fromGroup).get_ob())
+				for (auto qq : gm->session(fromSession).get_ob())
 				{
 					if (qq != fromQQ)
 					{
@@ -4135,12 +4224,12 @@ int FromMsg::CustomReply()
 {
 	const string strKey = readRest();
 	if (auto deck = CardDeck::mReplyDeck.find(strKey); deck != CardDeck::mReplyDeck.end()
-		|| (!isBotOff && (deck = CardDeck::mReplyDeck.find(strMsg)) != CardDeck::mReplyDeck.end()))
+		|| (!isDisabled && (deck = CardDeck::mReplyDeck.find(strMsg)) != CardDeck::mReplyDeck.end()))
 	{
 		if (strVar.empty())
 		{
 			strVar["nick"] = getName(fromQQ, fromGroup);
-			strVar["pc"] = getPCName(fromQQ, fromGroup);
+			getPCName(*this);
 			strVar["at"] = fromChat.second != msgtype::Private ? "[CQ:at,qq=" + to_string(fromQQ) + "]" : strVar["nick"];
 		}
 		reply(CardDeck::drawCard(deck->second, true));
@@ -4180,9 +4269,13 @@ bool FromMsg::DiceFilter()
 	}
 	if (isOtherCalled && !isCalled)return false;
 	init2(strMsg);
-	if (fromChat.second == msgtype::Private) isCalled = true;
+	strLowerMessage = strMsg;
+	std::transform(strLowerMessage.begin(), strLowerMessage.end(), strLowerMessage.begin(),
+				   [](unsigned char c) { return tolower(c); });
 	trusted = trustedQQ(fromQQ);
-	isBotOff = (console["DisabledGlobal"] && (trusted < 4 || !isCalled)) || (!(isCalled && console["DisabledListenAt"]) && (groupset(fromGroup, "停用指令") > 0));
+	fwdMsg();
+	if (fromChat.second == msgtype::Private) isCalled = true;
+	isDisabled = (console["DisabledGlobal"] && (trusted < 4 || !isCalled)) || (!(isCalled && console["DisabledListenAt"]) && groupset(fromGroup, "协议无效") > 0);
 	if (DiceReply()) 
 	{
 		if (isAns)
@@ -4193,8 +4286,8 @@ bool FromMsg::DiceFilter()
 		if (fromChat.second != msgtype::Private)chat(fromGroup).update(fromTime);
 		return 1;
 	}
-	if (groupset(fromGroup, "禁用回复") < 1 && CustomReply())return true;
-	if (isBotOff)return console["DisabledBlock"];
+	if (groupset(fromGroup, "禁用回复") < 1 && !isDisabled && CustomReply())return true;
+	if (isDisabled)return console["DisabledBlock"];
 	return false;
 }
 
@@ -4214,6 +4307,7 @@ int FromMsg::readNum(int& num)
 		intMsgCnt++;
 	}
 	if (strNum.length() > 9)return -2;
+	if (strNum.empty() || strNum == "-")return -3;
 	num = stoi(strNum);
 	return 0;
 }
