@@ -1,3 +1,5 @@
+#pragma once
+
 /*
  * 消息处理
  * Copyright (C) 2019 String.Empty
@@ -8,7 +10,6 @@
 #include <set>
 #include <utility>
 #include <string>
-#include "CQAPI_EX.h"
 #include "MsgMonitor.h"
 #include "DiceSchedule.h"
 #include "DiceMsgSend.h"
@@ -17,34 +18,39 @@
 using std::string;
 
 //打包待处理消息
-class FromMsg :public DiceJobDetail {
+class FromMsg : public DiceJobDetail {
 public:
 	string strLowerMessage;
 	long long fromGroup = 0;
 	long long fromSession;
 	Chat* pGrp = nullptr;
 	string strReply;
-	FromMsg(std::string message, long long qq) :DiceJobDetail(qq, { qq,CQ::msgtype::Private }, message){
+	FromMsg(std::string message, long long qq) :DiceJobDetail(qq, { qq,msgtype::Private }, message){
 		fromSession = ~fromQQ;
 	}
-	FromMsg(std::string message, long long fromGroup, CQ::msgtype msgType, long long qq) :DiceJobDetail(qq, { fromGroup,msgType }, message), fromGroup(fromGroup), fromSession(fromGroup){
+	FromMsg(std::string message, long long fromGroup, msgtype msgType, long long qq) :DiceJobDetail(qq, { fromGroup,msgType }, message), fromGroup(fromGroup), fromSession(fromGroup){
 		pGrp = &chat(fromGroup);
 	}
 
 	bool isBlock = false;
 
-	void reply(std::string strReply, bool isFormat = true)override;
+	void formatReply();
 
-	void reply(std::string strReply, const std::initializer_list<const std::string> replace_str,
-			   bool isFormat = true);
+	void reply(const std::string& strReply, bool isFormat = true)override;
 
-	void reply();
+	FromMsg& initVar(const std::initializer_list<const std::string>& replace_str);
+	void reply(const std::string& strReply, const std::initializer_list<const std::string>& replace_str);
+	void replyHidden(const std::string& strReply);
+
+	void reply(bool isFormat = true);
+
+	void replyHidden();
 
 	//通知
 	void note(std::string strMsg, int note_lv = 0b1)
 	{
 		strMsg = format(strMsg, GlobalMsg, strVar);
-		ofstream fout(string(DiceDir + "\\audit\\log") + to_string(console.DiceMaid) + "_" + printDate() + ".txt",
+		ofstream fout(DiceDir / "audit" / "log" / (to_string(console.DiceMaid) + "_" + printDate() + ".txt"),
 		              ios::out | ios::app);
 		fout << printSTNow() << "\t" << note_lv << "\t" << printLine(strMsg) << std::endl;
 		fout.close();
@@ -52,7 +58,7 @@ public:
 		const string note = getName(fromQQ) + strMsg;
 		for (const auto& [ct,level] : console.NoticeList) 
 		{
-			if (!(level & note_lv) || pair(fromQQ, CQ::msgtype::Private) == ct || ct == fromChat)continue;
+			if (!(level & note_lv) || pair(fromQQ, msgtype::Private) == ct || ct == fromChat)continue;
 			AddMsgToQueue(note, ct);
 		}
 	}
@@ -61,8 +67,8 @@ public:
 	std::string printFrom()
 	{
 		std::string strFwd;
-		if (fromChat.second == CQ::msgtype::Group)strFwd += "[群:" + to_string(fromGroup) + "]";
-		if (fromChat.second == CQ::msgtype::Discuss)strFwd += "[讨论组:" + to_string(fromGroup) + "]";
+		if (fromChat.second == msgtype::Group)strFwd += "[群:" + to_string(fromGroup) + "]";
+		if (fromChat.second == msgtype::Discuss)strFwd += "[讨论组:" + to_string(fromGroup) + "]";
 		strFwd += getName(fromQQ, fromGroup) + "(" + to_string(fromQQ) + "):";
 		return strFwd;
 	}
@@ -71,43 +77,34 @@ public:
 	void fwdMsg();
 	int AdminEvent(const string& strOption);
 	int MasterSet();
-	int DiceReply();
+	int BasicOrder();
+	int InnerOrder();
+	//int CustomOrder();
 	int CustomReply();
 	//判断是否响应
 	bool DiceFilter();
+	bool WordCensor();
+	void operator()();
 	short trusted = 0;
 
 private:
+	bool isVirtual = false;
 	//是否响应
 	bool isAns = false;
-	unsigned int intMsgCnt = 0;
 	bool isDisabled = false;
 	bool isCalled = false;
 	bool isAuth = false;
 
-	short getGroupAuth(long long group = 0)
-	{
-		if (trusted > 0)return trusted;
-		if (ChatList.count(group))
-		{
-			const int per = CQ::getGroupMemberInfo(group, fromQQ).permissions;
-			if (per > 1)return 0;
-			if (per)return -1;
-		}
-		return -2;
-	}
+	int getGroupAuth(long long group = 0);
 public:
+	unsigned int intMsgCnt = 0;
 	//跳过空格
 	void readSkipSpace()
 	{
 		while (intMsgCnt < strMsg.length() && isspace(static_cast<unsigned char>(strLowerMessage[intMsgCnt])))intMsgCnt++;
 	}
 
-	void readSkipColon()
-	{
-		readSkipSpace();
-		while (intMsgCnt < strMsg.length() && strMsg[intMsgCnt] == ':')intMsgCnt++;
-	}
+	void readSkipColon();
 
 	string readUntilSpace()
 	{
@@ -345,6 +342,7 @@ public:
 		}
 		return strMum;
 	}
+	void readItems(vector<string>&);
 };
 
 #endif /*DICE_EVENT*/

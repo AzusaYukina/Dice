@@ -4,6 +4,7 @@
  * Copyright (C) 2020 String.Empty
  */
 #pragma once
+#include <cstring>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -15,7 +16,7 @@ using std::unordered_set;
 
 struct WordNode {
 	//该节点的分词，连续数字、连续字母或GBK单字
-	string word;
+	//string word;
 	unordered_set<string>keys;
 	unordered_map<string, unordered_set<string>>next;
 };
@@ -62,12 +63,12 @@ public:
 		unordered_set<string> res;
 		unordered_set<string> sInter;
 		const WordNode* last_word = nullptr;
-		for (auto& word : words) {
+		for (const auto& word : words) {
 			//无该词，略过
 			if (!word_list.count(word))continue;
 			//检查连缀
-			if (last_word && !last_word->next.find(word)->second.empty()) {
-				for (auto& w : last_word->next.find(word)->second) {
+			if (last_word && last_word->next.find(word)!= last_word->next.end()) {
+				for (const auto& w : last_word->next.find(word)->second) {
 					if (res.count(w))sInter.insert(w);
 				}
 				if (!sInter.empty()) {

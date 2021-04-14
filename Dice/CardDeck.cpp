@@ -1030,14 +1030,6 @@ namespace CardDeck
 	std::map<std::string, std::vector<std::string>, less_ci> mReplyDeck = {
 		{".dissmiss", {"diss!diss!diss!会英语吗在那diss本骰娘？那叫!dismiss!"}}
 	};
-	//群聊牌堆
-	std::map<long long, std::vector<std::string>> mGroupDeck;
-	//群聊临时牌堆
-	std::map<long long, std::vector<std::string>> mGroupDeckTmp;
-	//私人牌堆
-	std::map<long long, std::vector<std::string>> mPrivateDeck;
-	//私人临时牌堆
-	std::map<long long, std::vector<std::string>> mPrivateDeckTmp;
 	std::map<std::string, std::string> PublicComplexDeck{
 		//{"调查员背景","个人描述：{个人描述}\n思想信念：{思想信念}\n重要之人：{重要之人}\n重要之人理由：{重要之人理由}\n意义非凡之地：{意义非凡之地}\n宝贵之物：{宝贵之物}\n特点：{调查员特点}"}
 	};
@@ -1112,9 +1104,7 @@ namespace CardDeck
 				sortedIndex.push_back(sortedIndex[sortedIndex.size() - 1] + cnt);
 			}
 		}
-
-
-		
+				
 		std::string strReply;
 		if (TempDeck.empty())return "";
 		if (TempDeck.size() == 1)
@@ -1162,6 +1152,11 @@ namespace CardDeck
 		int lq = 0, rq = 0;
 		while ((lq = strExp.find('{', intCnt)) != std::string::npos && (rq = strExp.find('}', lq)) != std::string::npos)
 		{
+			if (lq > 0 && strExp[lq - 1] == '\\') {
+				strExp.erase(strExp.begin() + lq - 1); 
+				intCnt = rq;
+				continue;
+			}
 			bool isTmpBack = false;
 			string strTempName = strExp.substr(lq + 1, rq - lq - 1);
 			if (strTempName[0] == '%')
@@ -1185,6 +1180,11 @@ namespace CardDeck
 		intCnt = 0;
 		while ((lq = strExp.find('[', intCnt)) != std::string::npos && (rq = strExp.find(']', lq)) != std::string::npos)
 		{
+			if (lq > 0 && strExp[lq - 1] == '\\') {
+				strExp.erase(strExp.begin() + lq - 1);
+				intCnt = rq;
+				continue;
+			}
 			string strRoll = strExp.substr(lq + 1, rq - lq - 1);
 			intCnt = rq + 1;
 			RD RDroll(strRoll);

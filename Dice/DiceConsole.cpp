@@ -7,8 +7,8 @@
  * |_______/  |________| |________| |________| |__|
  *
  * Dice! QQ Dice Robot for TRPG
- * Copyright (C) 2018-2020 w4123溯洄
- * Copyright (C) 2019-2020 String.Empty
+ * Copyright (C) 2018-2021 w4123溯洄
+ * Copyright (C) 2019-2021 String.Empty
  *
  * This program is free software: you can redistribute it and/or modify it under the terms
  * of the GNU Affero General Public License as published by the Free Software Foundation,
@@ -33,9 +33,13 @@
 #include "Jsonio.h"
 #include "BlackListManager.h"
 #include "DiceSchedule.h"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#endif	
+#include "DDAPI.h"
 
 using namespace std;
-using namespace CQ;
 
 const std::map<std::string, int, less_ci>Console::intDefault{
 {"DisabledGlobal",0},{"DisabledBlock",0},{"DisabledListenAt",1},
@@ -46,25 +50,26 @@ const std::map<std::string, int, less_ci>Console::intDefault{
 {"AutoClearBlack",1},{"LeaveBlackQQ",0},
 {"ListenGroupKick",1},{"ListenGroupBan",1},{"ListenSpam",1},
 {"BannedBanInviter",0},{"KickedBanInviter",0},
-{"GroupClearLimit",20},
+{"GroupInvalidSize",500},{"GroupClearLimit",20},
 {"CloudBlackShare",1},{"BelieveDiceList",0},{"CloudVisible",1},
 {"SystemAlarmCPU",90},{"SystemAlarmRAM",90},{"SystemAlarmDisk",90},
 {"SendIntervalIdle",500},{"SendIntervalBusy",100},
-//自动保存事件间隔[min],自动图片清理间隔[h]
-{"AutoSaveInterval",10},{"AutoClearImage",0}
+//自动保存事件间隔[min],自动图片清理间隔[h],自动重启框架间隔[h]
+{"AutoSaveInterval",5},{"AutoClearImage",0},{"AutoFrameRemake",0},
+//接收群内自己的消息，接受自己私聊消息
+{"ListenGroupEcho",0},{"ListenSelfEcho",0},
 };
-const enumap<string> Console::mClockEvent{"off", "on", "save", "clear"};
+const enumap<string> Console::mClockEvent{ "off", "on", "save", "clear" };
 
-int Console::setClock(Clock c, ClockEvent e)
+int Console::setClock(Clock c, const string& e)
 {
 	if (c.first > 23 || c.second > 59)return -1;
-	if (static_cast<int>(e) > 3)return -2;
 	mWorkClock.emplace(c, e);
 	save();
 	return 0;
 }
 
-int Console::rmClock(Clock c, ClockEvent e)
+int Console::rmClock(Clock c, const string& e)
 {
 	if (const auto it = match(mWorkClock, c, e); it != mWorkClock.end())
 	{
@@ -80,23 +85,7 @@ ResList Console::listClock() const
 	ResList list;
 	for (const auto& [clock, eve] : mWorkClock)
 	{
-		string strClock = printClock(clock);
-		switch (eve)
-		{
-		case ClockEvent::on:
-			strClock += " 定时开启";
-			break;
-		case ClockEvent::off:
-			strClock += " 定时关闭";
-			break;
-		case ClockEvent::save:
-			strClock += " 定时保存";
-			break;
-		case ClockEvent::clear:
-			strClock += " 定时清群";
-			break;
-		default: break;
-		}
+		string strClock = printClock(clock) + " " + eve;
 		list << strClock;
 	}
 	return list;
@@ -144,7 +133,7 @@ void Console::rmNotice(chatType ct)
 
 int Console::log(const std::string& strMsg, int note_lv, const string& strTime)
 {
-	ofstream fout(string(DiceDir + "\\audit\\log") + to_string(DiceMaid) + "_" + printDate() + ".txt",
+	ofstream fout(DiceDir / "audit" / "log" / (to_string(DiceMaid) + "_" + printDate() + ".txt"),
 	              ios::out | ios::app);
 	fout << strTime << "\t" << note_lv << "\t" << printLine(strMsg) << std::endl;
 	fout.close();
@@ -156,19 +145,22 @@ int Console::log(const std::string& strMsg, int note_lv, const string& strTime)
 		{
 			if (!(level & note_lv))continue;
 			AddMsgToQueue(note, ct);
-			Cnt++;
+			Cnt++; 
+			if(strTime.empty())this_thread::sleep_for(chrono::milliseconds(console["SendIntervalIdle"]));
 		}
-		if (!Cnt)sendPrivateMsg(DiceMaid, note);
+		if (!Cnt)DD::sendPrivateMsg(DiceMaid, note);
 	}
+	else DD::debugLog(note);
 	return Cnt;
 } 
 void Console::newMaster(long long qq)
 {
 	masterQQ = qq; 
-	getUser(qq).trust(5); 
-	setNotice({qq, CQ::msgtype::Private}, 0b111111);
+	if (trustedQQ(qq) < 5)getUser(qq).trust(5);
+	setNotice({qq, msgtype::Private}, 0b111111);
 	save(); 
-	AddMsgToQueue(getMsg("strNewMaster"), qq); 
+	AddMsgToQueue(getMsg("strNewMaster"), qq);
+	AddMsgToQueue(intConf["Private"] ? getMsg("strNewMasterPrivate") : getMsg("strNewMasterPublic"), qq);
 }
 
 void Console::reset()
@@ -178,18 +170,40 @@ void Console::reset()
 	NoticeList.clear();
 }
 
+bool Console::load() 	{
+	string s;
+	//DSens.build({ {"nn老公",2 } });
+	if (!rdbuf(fpPath, s))return false;
+	DDOM xml(s);
+	if (xml.count("mode"))isMasterMode = stoi(xml["mode"].strValue);
+	if (xml.count("master"))masterQQ = stoll(xml["master"].strValue);
+	if (xml.count("clock"))
+		for (auto& child : xml["clock"].vChild) {
+			mWorkClock.insert({
+				scanClock(child.strValue), child.tag
+							  });
+		}
+	if (xml.count("conf"))
+		for (auto& child : xml["conf"].vChild) 			{
+			std::pair<string, int> conf;
+			readini(child.strValue, conf);
+			if (intDefault.count(conf.first))intConf.insert(conf);
+		}
+	loadNotice();
+	return true;
+}
 void Console::loadNotice()
 {
-	if (loadFile(DiceDir + "\\conf\\NoticeList.txt", NoticeList) < 1)
+	if (loadFile(DiceDir / "conf" / "NoticeList.txt", NoticeList) < 1)
 	{
 		std::set<chatType> sChat;
-		if (loadFile(std::string(getAppDirectory()) + "MonitorList.RDconf", sChat) > 0)
+		if (loadFile(DiceDir / "com.w4123.dice" / "MonitorList.RDconf", sChat) > 0)
 			for (const auto& it : sChat)
 			{
 				console.setNotice(it, 0b100000);
 			}
 		sChat.clear();
-		if (loadFile(DiceDir + "\\conf\\RecorderList.RDconf", sChat) > 0)
+		if (loadFile(DiceDir / "conf" / "RecorderList.RDconf", sChat) > 0)
 			for (const auto& it : sChat)
 			{
 				console.setNotice(it, 0b11011);
@@ -209,7 +223,7 @@ void Console::loadNotice()
 
 void Console::saveNotice() const
 {
-	saveFile(DiceDir + "\\conf\\NoticeList.txt", NoticeList);
+	saveFile(DiceDir / "conf" / "NoticeList.txt", NoticeList);
 }
 
 Console console;
@@ -221,28 +235,39 @@ std::set<long long> ExceptGroups;
 std::map<long long, long long> mDiceList;
 
 //程序启动时间
-long long llStartTime = clock();
+long long llStartTime = time(nullptr);
 
 //当前时间
-SYSTEMTIME stNow{};
-SYSTEMTIME stTmp{};
+tm stNow{};
 
 std::string printSTNow()
 {
-	GetLocalTime(&stNow);
+	time_t tt = time(nullptr);
+#ifdef _MSC_VER
+	localtime_s(&stNow, &tt);
+#else
+	localtime_r(&tt, &stNow);
+#endif
 	return printSTime(stNow);
 }
 
 std::string printDate()
 {
-	return to_string(stNow.wYear) + "-" + (stNow.wMonth < 10 ? "0" : "") + to_string(stNow.wMonth) + "-" + (
-		stNow.wDay < 10 ? "0" : "") + to_string(stNow.wDay);
+	return to_string(stNow.tm_year + 1900) + "-" + (stNow.tm_mon + 1 < 10 ? "0" : "") + to_string(stNow.tm_mon + 1) + "-" + (
+		stNow.tm_mday < 10 ? "0" : "") + to_string(stNow.tm_mday);
 }
 
 std::string printDate(time_t tt)
 {
 	tm t{};
-	if (!tt || localtime_s(&t, &tt))return R"(????-??-??)";
+	if(!tt) return R"(????-??-??)"; 
+#ifdef _MSC_VER
+	auto ret = localtime_s(&t, &tt);
+	if(ret) return R"(????-??-??)";
+#else
+	auto ret = localtime_r(&tt, &t);
+	if(!ret) return R"(????-??-??)";
+#endif
 	return to_string(t.tm_year + 1900) + "-" + to_string(t.tm_mon + 1) + "-" + to_string(t.tm_mday);
 }
 
@@ -260,28 +285,27 @@ string printClock(std::pair<int, int> clock)
 	return strClock;
 }
 
-std::string printSTime(const SYSTEMTIME st)
+std::string printSTime(const tm st)
 {
-	return to_string(st.wYear) + "-" + (st.wMonth < 10 ? "0" : "") + to_string(st.wMonth) + "-" + (
-			st.wDay < 10 ? "0" : "") + to_string(st.wDay) + " " + (st.wHour < 10 ? "0" : "") + to_string(st.wHour) + ":"
+	return to_string(st.tm_year + 1900) + "-" + (st.tm_mon + 1 < 10 ? "0" : "") + to_string(st.tm_mon + 1) + "-" + (
+			st.tm_mday < 10 ? "0" : "") + to_string(st.tm_mday) + " " + (st.tm_hour < 10 ? "0" : "") + to_string(st.tm_hour) + ":"
 		+ (
-			st.wMinute < 10 ? "0" : "") + to_string(st.wMinute) + ":" + (st.wSecond < 10 ? "0" : "") +
-		to_string(st.wSecond);
+			st.tm_min < 10 ? "0" : "") + to_string(st.tm_min) + ":" + (st.tm_sec < 10 ? "0" : "") +
+		to_string(st.tm_sec);
 }
 	//打印用户昵称QQ
 	string printQQ(long long llqq)
 	{
-		string nick = getStrangerInfo(llqq).nick;
-		if (nick.empty())nick = getFriendList()[llqq].nick;
-		if(nick.empty())return "用户(" + to_string(llqq) + ")";
+		string nick = DD::getQQNick(llqq);
+		if (nick.empty())return getMsg("stranger") + "[" + to_string(llqq) + "]";
 		return nick + "(" + to_string(llqq) + ")";
 	}
 	//打印QQ群号
 	string printGroup(long long llgroup)
 	{
-		if (!llgroup)return"私聊";
+		if (!llgroup)return "私聊";
 		if (ChatList.count(llgroup))return printChat(ChatList[llgroup]);
-		if (getGroupList().count(llgroup))return "[" + getGroupList()[llgroup] + "](" + to_string(llgroup) + ")";
+		if (string name{ DD::getGroupName(llgroup) };!name.empty())return "[" + name + "](" + to_string(llgroup) + ")";
 		return "群(" + to_string(llgroup) + ")";
 	}
 	//打印聊天窗口
@@ -312,127 +336,21 @@ void getExceptGroup() {
 }
 
 
-bool operator==(const SYSTEMTIME& st, const Console::Clock clock)
+bool operator==(const tm& st, const Console::Clock clock)
 {
-	return st.wHour == clock.first && st.wHour == clock.second;
+	return st.tm_hour == clock.first && st.tm_hour == clock.second;
 }
 
-bool operator<(const Console::Clock clock, const SYSTEMTIME& st)
+bool operator<(const Console::Clock clock, const tm& st)
 {
-	return st.wHour == clock.first && st.wHour == clock.second;
+	return st.tm_hour == clock.first && st.tm_hour == clock.second;
 }
 
-//简易计时器
-	void ConsoleTimer()
-	{
-		Console::Clock clockNow{stNow.wHour,stNow.wMinute};
-		while (Enabled) 
-		{
-			GetLocalTime(&stNow);
-			//分钟时点变动
-			if (stTmp.wMinute != stNow.wMinute)
-			{
-				stTmp = stNow;
-				clockNow = {stNow.wHour, stNow.wMinute};
-				for (const auto& [clock,eve_type] : multi_range(console.mWorkClock, clockNow))
-				{
-					switch (eve_type)
-					{
-					case ClockEvent::on:
-						if (console["DisabledGlobal"])
-						{
-							console.set("DisabledGlobal", 0);
-							console.log(getMsg("strClockToWork"), 0b10000, "");
-						}
-						break;
-					case ClockEvent::off:
-						if (!console["DisabledGlobal"])
-						{
-							console.set("DisabledGlobal", 1);
-							console.log(getMsg("strClockOffWork"), 0b10000, "");
-						}
-						break;
-					case ClockEvent::save:
-						dataBackUp();
-						console.log(GlobalMsg["strSelfName"] + "定时保存完成√", 1, printSTime(stTmp));
-						break;
-					case ClockEvent::clear:
-						sch.push_job("clrgroup", true, {
-							{"clear_mode","black"}
-									 });
-						break;
-					default: break;
-					}
-				}
-			}
-			this_thread::sleep_for(100ms);
+	void ThreadFactory::exit() {
+		rear = 0;
+		for (auto& th : vTh) {
+			if (th.joinable())th.join();
 		}
+		vTh = {};
 	}
 
-
-EVE_Menu(eventGlobalSwitch)
-{
-	if (console["DisabledGlobal"])
-	{
-		console.set("DisabledGlobal", 0);
-		MessageBoxA(nullptr, "骰娘已结束静默√", "全局开关", MB_OK | MB_ICONINFORMATION);
-	}
-	else
-	{
-		console.set("DisabledGlobal", 1);
-		MessageBoxA(nullptr, "骰娘已全局静默√", "全局开关", MB_OK | MB_ICONINFORMATION);
-	}
-
-	return 0;
-}
-
-EVE_Request_AddFriend(eventAddFriend)
-{
-	if (!console["ListenFriendRequest"])return 0;
-	string strMsg = "好友添加请求，来自 " + printQQ(fromQQ)+ ":";
-	if (msg && msg[0] != '\0') strMsg += msg;
-	this_thread::sleep_for(3s);
-	if (blacklist->get_qq_danger(fromQQ))
-	{
-		strMsg += "\n已拒绝（用户在黑名单中）";
-		setFriendAddRequest(responseFlag, 2, "");
-		console.log(strMsg, 0b10, printSTNow());
-	}
-	else if (trustedQQ(fromQQ))
-	{
-		strMsg += "\n已同意（受信任用户）";
-		setFriendAddRequest(responseFlag, 1, "");
-		AddMsgToQueue(getMsg("strAddFriendWhiteQQ"), fromQQ);
-		console.log(strMsg, 1, printSTNow());
-	}
-	else if (console["AllowStranger"] < 2 && !UserList.count(fromQQ))
-	{
-		strMsg += "\n已拒绝（无用户记录）";
-		setFriendAddRequest(responseFlag, 2, getMsg("strFriendDenyNotUser").c_str());
-		console.log(strMsg, 1, printSTNow());
-	}
-	else if (console["AllowStranger"] < 1)
-	{
-		strMsg += "\n已拒绝（非信任用户）";
-		setFriendAddRequest(responseFlag, 2, getMsg("strFriendDenyNoTrust").c_str());
-		console.log(strMsg, 1, printSTNow());
-	}
-	else
-	{
-		strMsg += "\n已同意";
-		setFriendAddRequest(responseFlag, 1, "");
-		AddMsgToQueue(getMsg("strAddFriend"), fromQQ);
-		console.log(strMsg, 1, printSTNow());
-	}
-	return 1;
-}
-
-EVE_Friend_Add(eventFriendAdd)
-{
-	if (!console["ListenFriendAdd"])return 0;
-	this_thread::sleep_for(3s);
-	GlobalMsg["strAddFriendWhiteQQ"].empty()
-		? AddMsgToQueue(getMsg("strAddFriend"), fromQQ)
-		: AddMsgToQueue(getMsg("strAddFriendWhiteQQ"), fromQQ);
-	return 0;
-}

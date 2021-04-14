@@ -2,16 +2,21 @@
  * 后台系统
  * Copyright (C) 2019-2020 String.Empty
  */
-#include <windows.h>
-#include <xutility>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#endif
 #include <string_view>
+#include <filesystem>
 #include "ManagerSystem.h"
 
 #include "CardDeck.h"
 #include "GlobalVar.h"
+#include "DDAPI.h"
+#include "CQTools.h"
 
-string dirExe;
-string DiceDir = "DiceData";
+std::filesystem::path dirExe;
+std::filesystem::path DiceDir("DiceData");
  //被引用的图片列表
 unordered_set<string> sReferencedImage;
 
@@ -43,6 +48,7 @@ User& getUser(long long qq)
 short trustedQQ(long long qq) 
 {
 	if (qq == console.master())return 256;
+	if (qq == console.DiceMaid)return 255;
 	else if (!UserList.count(qq))return 0;
 	else return UserList[qq].nTrust;
 }
@@ -69,8 +75,9 @@ string getName(long long QQ, long long GroupID)
 	if (QQ == console.DiceMaid)return getMsg("strSelfCall");
 	string nick;
 	if (UserList.count(QQ) && getUser(QQ).getNick(nick, GroupID))return nick;
-	if (GroupID && !(nick = strip(CQ::getGroupMemberInfo(GroupID, QQ).GroupNick)).empty())return nick;
-	if (!(nick = strip(CQ::getStrangerInfo(QQ).nick)).empty())return nick;
+	if (GroupID && !(nick = DD::getGroupNick(GroupID, QQ)).empty()
+		&& !(nick = strip(msg_decode(nick))).empty())return nick;
+	if (nick = DD::getQQNick(QQ); !(nick = strip(msg_decode(nick))).empty())return nick;
 	return GlobalMsg["stranger"] + "(" + to_string(QQ) + ")";
 }
 void filter_CQcode(string& nick, long long fromGroup)
@@ -133,14 +140,10 @@ Chat& chat(long long id)
 }
 Chat& Chat::id(long long grp) {
 	ID = grp;
+	Name = DD::getGroupName(grp);
 	if (!Enabled)return *this;
-	if (CQ::GroupInfo ginfo(grp); ginfo.llGroup || CQ::getGroupList().count(grp)) {
-		
-		Name = ginfo.strGroupName;
+	if (DD::getGroupIDList().count(grp)) {
 		isGroup = true;
-		if (ExceptGroups.count(grp) || ginfo.nGroupSize > 499) {
-			boolConf.insert("协议无效");
-		}
 	}
 	else {
 		boolConf.insert("未进");
@@ -148,21 +151,30 @@ Chat& Chat::id(long long grp) {
 	return *this;
 }
 
+void Chat::leave(const string& msg) {
+	if (!msg.empty()) {
+		if (isGroup)DD::sendGroupMsg(ID, msg);
+		else DD::sendDiscussMsg(ID, msg);
+		std::this_thread::sleep_for(500ms);
+	}
+	isGroup ? DD::setGroupLeave(ID) : DD::setDiscussLeave(ID);
+	set("已退");
+}
 bool Chat::is_except()const {
 	return boolConf.count("免黑") || boolConf.count("协议无效");
 }
 
-int groupset(long long id, string st)
+int groupset(long long id, const string& st)
 {
 	if (!ChatList.count(id))return -1;
-	return ChatList[id].isset(std::move(st));
+	return ChatList[id].isset(st);
 }
 
 string printChat(Chat& grp)
 {
-	if (CQ::getGroupList().count(grp.ID))return "[" + CQ::getGroupList()[grp.ID] + "](" + to_string(grp.ID) + ")";
+	string name{ DD::getGroupName(grp.ID) };
+	if (!name.empty())return "[" + name + "](" + to_string(grp.ID) + ")";
 	if (!grp.Name.empty())return "[" + grp.Name + "](" + to_string(grp.ID) + ")";
-	if (grp.isset("群名"))return "[" + grp.strConf["群名"] + "](" + to_string(grp.ID) + ")";
 	if (grp.isGroup) return "群(" + to_string(grp.ID) + ")";
 	return "讨论组(" + to_string(grp.ID) + ")";
 }
@@ -184,6 +196,8 @@ void scanImage(const vector<string>& v, unordered_set<string>& list) {
 		scanImage(it, sReferencedImage);
 	}
 }
+
+#ifdef _WIN32
 
 DWORD getRamPort()
 {
@@ -275,3 +289,5 @@ long long getDiskUsage(double& mbFreeBytes, double& mbTotalBytes){
 	}
 	return 0;
 }
+
+#endif

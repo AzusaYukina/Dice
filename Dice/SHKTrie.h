@@ -6,6 +6,7 @@
 #include <map>
 #include <unordered_set>
 #include <string>
+#include <cstring>
 using std::map;
 using std::unordered_set;
 using std::string;
@@ -27,8 +28,8 @@ class TrieG {
 	//是为目标节点的子节点匹配fail
 	void make_fail(Node& node) {
 		if (&node == &root) {
-			for (auto& kid : node.next) {
-				kid.second.fail = &node;
+			for (auto& [ch, kid] : node.next) {
+				kid.fail = &node;
 			}
 		}
 		else {
@@ -41,8 +42,8 @@ class TrieG {
 				}
 			}
 		}
-		for (auto& kid : node.next) {
-			make_fail(kid.second);
+		for (auto& [ch, kid] : node.next) {
+			make_fail(kid);
 		}
 	}
 	static bool ignored(char ch) {
@@ -73,7 +74,23 @@ public:
 	void build(const Con& dir) {
 		new(this)TrieG(dir);
 	}
+	void insert(const string& key) {
+		add(key);
+		make_fail(root);
+	}
 	//前缀匹配
+	bool match_head(const string& s, string& res)const {
+		const Node* p = &root;
+		for (const auto& ch : s) {
+			//if (ignored(ch))continue;
+			if (!p->next.count(ch))break;
+			p = &(p->next.find(ch)->second);
+			if (p->isleaf) {
+				res = p->value;
+			}
+		}
+		return !res.empty();
+	}
 	bool match_head(const string& s, unordered_set<string>& res)const {
 		const Node* p = &root;
 		for (const auto& ch : s) {

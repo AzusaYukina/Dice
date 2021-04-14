@@ -1,3 +1,5 @@
+#pragma once
+
 /*
  *  _______     ________    ________    ________    __
  * |   __  \   |__    __|  |   _____|  |   _____|  |  |
@@ -20,7 +22,7 @@
  * You should have received a copy of the GNU Affero General Public License along with this
  * program. If not, see <http://www.gnu.org/licenses/>.
  */
-#pragma once
+
 #ifndef DICE_MSG_FORMAT
 #define DICE_MSG_FORMAT
 #include <string>
@@ -146,6 +148,21 @@ public:
 	[[nodiscard]] size_t size() const
 	{
 		return vRes.size();
+	}
+};
+
+//按属性名输出项目
+class AttrList {
+	std::unordered_map<string, string> mItem;
+	std::vector<string> vKey;
+public:
+	string show() {
+		string res;
+		int index = 0;
+		for (auto& key : vKey) {
+			res += "\n" + key + "=" + mItem[key];
+		}
+		return res;
 	}
 };
 

@@ -1,15 +1,17 @@
-/*
- * Copyright (C) 2019-2020 String.Empty
- */
 #pragma once
+
+/*
+ * Copyright (C) 2019-2021 String.Empty
+ */
+
 #ifndef Dice_Console
 #define Dice_Console
+#include <ctime>
 #include <string>
 #include <utility>
 #include <vector>
 #include <map>
 #include <set>
-#include <Windows.h>
 #include <thread>
 #include <chrono>
 #include <array>
@@ -18,15 +20,14 @@
 #include "DiceFile.hpp"
 #include "MsgFormat.h"
 #include "DiceMsgSend.h"
-#include "CQEVE_ALL.h"
 using namespace std::literals::chrono_literals;
 using std::string;
 using std::to_string;
 
-extern string dirExe;
-extern string DiceDir;
+extern std::filesystem::path dirExe;
+extern std::filesystem::path DiceDir;
 
-enum class ClockEvent { off, on, save, clear };
+//enum class ClockEvent { off, on, save, clear };
 
 class Console
 {
@@ -69,7 +70,7 @@ public:
 
 	void killMaster()
 	{
-		rmNotice({masterQQ, CQ::msgtype::Private});
+		rmNotice({masterQQ, msgtype::Private});
 		masterQQ = 0;
 		save();
 	}
@@ -81,12 +82,12 @@ public:
 		return 0;
 	}
 
-	int setClock(Clock c, ClockEvent e);
-	int rmClock(Clock c, ClockEvent e);
+	int setClock(Clock c, const string&);
+	int rmClock(Clock c, const string&);
 	[[nodiscard]] ResList listClock() const;
 	[[nodiscard]] ResList listNotice() const;
 	[[nodiscard]] int showNotice(chatType ct) const;
-	void setPath(std::string path) { strPath = std::move(path); }
+	void setPath(const std::filesystem::path& path) { fpPath = path; }
 
 	void set(const std::string& key, int val)
 	{
@@ -100,34 +101,11 @@ public:
 	void rmNotice(chatType ct);
 	void reset();
 
-	bool load()
-	{
-		string s;
-		//DSens.build({ {"nn老公",2 } });
-		if (!rdbuf(strPath, s))return false;
-		DDOM xml(s);
-		if (xml.count("mode"))isMasterMode = stoi(xml["mode"].strValue);
-		if (xml.count("master"))masterQQ = stoll(xml["master"].strValue);
-		if (xml.count("clock"))
-			for (auto& child : xml["clock"].vChild)
-			{
-				if (mClockEvent.count(child.tag))mWorkClock.insert({
-					scanClock(child.strValue), static_cast<ClockEvent>(mClockEvent[child.tag])
-				});
-			}
-		if (xml.count("conf"))
-			for (auto& child : xml["conf"].vChild)
-			{
-				std::pair<string, int> conf;
-				readini(child.strValue, conf);
-				if (intDefault.count(conf.first))intConf.insert(conf);
-			}
-		loadNotice();
-		return true;
-	}
+	bool load();
 	void save() 
 	{
-		mkDir(DiceDir + "/conf");
+		std::error_code ec;
+		std::filesystem::create_directories(DiceDir / "conf", ec);
 		DDOM xml("console","");
 		xml.push(DDOM("mode", to_string(isMasterMode)));
 		xml.push(DDOM("master", to_string(masterQQ)));
@@ -136,7 +114,7 @@ public:
 			DDOM clocks("clock", "");
 			for (auto& [clock, type] : mWorkClock)
 			{
-				clocks.push(DDOM(mClockEvent[static_cast<int>(type)], printClock(clock)));
+				clocks.push(DDOM(type, printClock(clock)));
 			}
 			xml.push(clocks);
 		}
@@ -149,16 +127,16 @@ public:
 			}
 			xml.push(conf);
 		}
-		std::ofstream fout(strPath);
-		fout << xml.dump();
+		std::ofstream fout(fpPath);
+		if (fout) fout << xml.dump();
 	}
 
 	void loadNotice();
 	void saveNotice() const;
 private:
-	string strPath;
+	std::filesystem::path fpPath;
 	std::map<std::string, int, less_ci> intConf;
-	std::multimap<Clock, ClockEvent> mWorkClock{};
+	std::multimap<Clock, string> mWorkClock{};
 	std::map<chatType, int> NoticeList{};
 };
 	extern Console console;
@@ -186,9 +164,9 @@ void getExceptGroup();
 	//程序启动时间
 	extern long long llStartTime;
 	//当前时间
-	extern SYSTEMTIME stNow;
+	extern tm stNow;
 	std::string printClock(std::pair<int, int> clock);
-	std::string printSTime(SYSTEMTIME st);
+	std::string printSTime(tm st);
 	std::string printSTNow(); 
 	std::string printDate();
 	std::string printDate(time_t tt);
@@ -205,18 +183,15 @@ public:
 	int rear = 0;
 	std::array<std::thread, 6> vTh;
 
-	void operator()(void (*func)())
-	{
-		std::thread th(func);
+	void operator()(void (*func)()) {
+		std::thread th{ [func]() {try { func(); } catch (...) { return; }} };
 		vTh[rear] = std::move(th);
+		//vTh[rear].detach();
 		rear++;
 	}
-	void exit() {
-		for (auto& th : vTh) {
-			th.join();
-		}
-		vTh = {};
-		rear = 0;
+	void exit();
+	~ThreadFactory() {
+		exit();
 	}
 };
 

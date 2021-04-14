@@ -3,6 +3,7 @@
  * Copyright (C) 2019-2020 String.Empty
  */
 #pragma once
+#include <string>
 #include <vector>
 #include <map>
 #include <queue>
@@ -56,7 +57,7 @@ public:
 		return mVal.find(val) != mVal.end();
 	}
 
-	size_t operator[](T& val) const
+	size_t operator[](const T& val) const
 	{
 		if (auto it = mVal.find(val); it != mVal.end())return it->second;
 		return -1;
@@ -129,6 +130,3 @@ public:
 	}
 };
 
-class FormStep
-{
-};
